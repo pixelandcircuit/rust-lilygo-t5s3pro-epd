@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>embedded-inspect demo</title>
+<style>
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --border:   #30363d;
+  --text:     #c9d1d9;
+  --muted:    #8b949e;
+  --accent:   #58a6ff;
+  --green:    #3fb950;
+  --yellow:   #d29922;
+  --red:      #f85149;
+  --orange:   #e3b341;
+}
+*,*::before,*::after { box-sizing: border-box; margin:0; padding:0 }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── header ─────────────────────────────────────────────────── */
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+h1 { font-size: 15px; color: var(--accent); font-weight: 600; letter-spacing: -.3px }
+h1 span { color: var(--muted); font-weight: 400 }
+
+#status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+.dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  flex-shrink: 0;
+}
+#status.ok   .dot { background: var(--green) }
+#status.warn .dot { background: var(--yellow) }
+
+/* ── main ────────────────────────────────────────────────────── */
+main { flex: 1; padding: 20px 24px 80px }
+
+/* ── tree ────────────────────────────────────────────────────── */
+.tree { font-size: 13px }
+
+.struct-node { margin: 4px 0 }
+
+.struct-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  color: var(--text);
+  padding: 2px 0;
+}
+.struct-header:hover { color: #fff }
+
+.chevron { font-size: 10px; color: var(--muted); width: 12px; display: inline-block }
+
+.struct-label { font-weight: 600; color: var(--accent) }
+.type-tag {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.children { padding-left: 22px }
+.collapsed > .children { display: none }
+.collapsed .chevron::before { content: '▸' }
+.chevron::before { content: '▾' }
+
+/* ── field row ───────────────────────────────────────────────── */
+.field-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0 3px 20px;
+  border-left: 1px solid transparent;
+}
+.field-row:hover { border-left-color: var(--border) }
+
+.fn { color: var(--accent); min-width: 150px; flex-shrink: 0 }
+.arrow { color: var(--border) }
+
+.fv {
+  color: var(--green);
+  font-weight: 600;
+  min-width: 60px;
+}
+@keyframes flash {
+  0%   { color: #fff; background: rgba(210,153,34,.35); border-radius: 3px; padding: 0 3px }
+  100% { color: var(--green); background: transparent; padding: 0 }
+}
+.fv.changed { animation: flash .7s ease-out forwards }
+
+.badge {
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid;
+  line-height: 1.2;
+}
+.ro   { color: var(--muted); border-color: var(--border); background: var(--surface) }
+.enum { color: #7ee787; border-color: #2d4a2d; background: #0d2210 }
+
+/* ── event log ───────────────────────────────────────────────── */
+#events {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 6px 20px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+#events .label { color: var(--muted); flex-shrink: 0 }
+#event-list { display: flex; gap: 14px; overflow: hidden }
+.ev-item { flex-shrink: 0 }
+.ev-path { color: var(--accent) }
+.ev-val  { color: var(--orange) }
+</style>
+</head>
+<body>
+<header>
+  <h1>embedded-inspect <span>demo</span></h1>
+  <div id="status">
+    <span class="dot"></span>
+    <span id="status-text">Connecting…</span>
+  </div>
+</header>
+
+<main>
+  <div id="tree" class="tree"></div>
+</main>
+
+<div id="events">
+  <span class="label">events</span>
+  <div id="event-list"><span style="color:var(--muted)">—</span></div>
+</div>
+
+<script>
+'use strict';
+
+// ─── state ─────────────────────────────────────────────────────────────────
+let ws, nextId = 1;
+const pending = {};       // request_id → resolve fn
+const recentEvts = [];    // last N events for the footer
+
+// ─── connection ─────────────────────────────────────────────────────────────
+function connect() {
+  const url = `ws://${location.host}/debug`;
+  ws = new WebSocket(url);
+
+  ws.onopen  = ()    => send({ type:'Hello', request_id: nextId++, version:1, client_name:'browser' });
+  ws.onclose = ()    => { setStatus('warn','Disconnected — retrying…'); setTimeout(connect,3000) };
+  ws.onerror = ()    => setStatus('warn','Connection error');
+  ws.onmessage = ({data}) => { try { dispatch(JSON.parse(data)) } catch(e) { console.error(e) } };
+}
+
+function send(msg) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+// Returns a promise that resolves when the matching response arrives.
+function request(msg) {
+  return new Promise(resolve => {
+    pending[msg.request_id] = resolve;
+    send(msg);
+  });
+}
+
+// ─── dispatch ───────────────────────────────────────────────────────────────
+function dispatch(msg) {
+  // Resolve pending request callbacks first (SchemaResponse, ResponseValue, etc.)
+  if (msg.request_id != null && pending[msg.request_id]) {
+    const resolve = pending[msg.request_id];
+    delete pending[msg.request_id];
+    resolve(msg);
+    return;
+  }
+
+  switch (msg.type) {
+    case 'HelloAck':
+      setStatus('ok', `Connected  ·  protocol v${msg.version}  ·  ${msg.server_name}`);
+      discoverAndRender();
+      break;
+
+    case 'ValueChanged':
+      setValue(msg.path, msg.value);
+      logEvent(msg.path, msg.value, msg.sequence);
+      break;
+
+    case 'Error':
+      console.warn('[server error]', msg);
+      break;
+  }
+}
+
+// ─── schema discovery ───────────────────────────────────────────────────────
+async function discoverAndRender() {
+  const resp = await request({ type:'GetSchema', request_id: nextId++ });
+  if (resp.type !== 'SchemaResponse') return;
+
+  const root = document.getElementById('tree');
+  root.innerHTML = '';
+  root.appendChild(renderNode(resp.schema, ''));
+
+  // Fetch initial values for all leaf paths concurrently.
+  const leaves = collectLeaves(resp.schema, '');
+  await Promise.all(leaves.map(fetchValue));
+}
+
+async function fetchValue(path) {
+  const resp = await request({ type:'GetValue', request_id: nextId++, path });
+  if (resp.type === 'ResponseValue') setValue(resp.path, resp.value);
+}
+
+// ─── schema rendering ───────────────────────────────────────────────────────
+function renderNode(schema, path) {
+  if (schema.kind === 'Struct') return renderStruct(schema, path);
+  return renderLeaf(schema, path.split('.').pop() ?? path, path, false);
+}
+
+function renderStruct(schema, path) {
+  const wrap = el('div', 'struct-node');
+
+  // Collapsible header
+  const header = el('div', 'struct-header');
+  const chevron = el('span', 'chevron');
+  const label = el('span', 'struct-label');
+  label.textContent = path ? path.split('.').pop() : schema.type_name;
+  const tag = el('span', 'type-tag');
+  tag.textContent = schema.type_name;
+  header.append(chevron, label, tag);
+  header.onclick = () => wrap.classList.toggle('collapsed');
+  wrap.appendChild(header);
+
+  // Children
+  const children = el('div', 'children');
+  for (const f of schema.fields) {
+    const fp = path ? `${path}.${f.name}` : f.name;
+    children.appendChild(
+      f.schema.kind === 'Struct'
+        ? renderStruct(f.schema, fp)
+        : renderLeaf(f.schema, f.name, fp, f.read_only)
+    );
+  }
+  wrap.appendChild(children);
+  return wrap;
+}
+
+function renderLeaf(schema, name, path, readOnly) {
+  const row = el('div', 'field-row');
+  row.dataset.path = path;
+
+  const nameEl = el('span', 'fn');
+  nameEl.textContent = name;
+
+  const arrow = el('span', 'arrow');
+  arrow.textContent = '▸';
+
+  const val = el('span', 'fv');
+  val.id = `v:${path}`;
+  val.textContent = '…';
+
+  row.append(nameEl, arrow, val);
+
+  if (readOnly) {
+    const b = el('span', 'badge ro'); b.textContent = 'ro'; row.appendChild(b);
+  }
+  if (schema.kind === 'Enum') {
+    const b = el('span', 'badge enum'); b.textContent = schema.type_name; row.appendChild(b);
+  }
+
+  return row;
+}
+
+// ─── value updates ──────────────────────────────────────────────────────────
+function collectLeaves(schema, prefix) {
+  if (schema.kind === 'Struct') {
+    return schema.fields.flatMap(f => {
+      const p = prefix ? `${prefix}.${f.name}` : f.name;
+      return f.schema.kind === 'Struct' ? collectLeaves(f.schema, p) : [p];
+    });
+  }
+  return prefix ? [prefix] : [];
+}
+
+function setValue(path, raw) {
+  const el = document.getElementById(`v:${path}`);
+  if (!el) return;
+  const text = fmt(raw);
+  if (el.textContent === text) return;   // no-op if unchanged
+  el.textContent = text;
+  el.classList.remove('changed');
+  void el.offsetWidth;                   // force reflow → restart animation
+  el.classList.add('changed');
+}
+
+function fmt(v) {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return String(v);
+  if (typeof v === 'number')  return String(v);
+  if (typeof v === 'string')  return v;
+  if (typeof v === 'object') {
+    if ('variant' in v) return v.variant;
+    if ('object'  in v) return `{${v.object}}`;
+  }
+  return JSON.stringify(v);
+}
+
+// ─── event log ──────────────────────────────────────────────────────────────
+function logEvent(path, value, seq) {
+  recentEvts.unshift({ path, value, seq });
+  if (recentEvts.length > 6) recentEvts.pop();
+
+  document.getElementById('event-list').innerHTML = recentEvts.map(e =>
+    `<span class="ev-item">#${e.seq}&nbsp;<span class="ev-path">${e.path}</span>&nbsp;=&nbsp;<span class="ev-val">${fmt(e.value)}</span></span>`
+  ).join('');
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+function el(tag, cls) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  return e;
+}
+
+function setStatus(cls, text) {
+  const el = document.getElementById('status');
+  el.className = cls;
+  document.getElementById('status-text').textContent = text;
+}
+
+connect();
+</script>
+</body>
+</html>

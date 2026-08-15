@@ -1,3 +1,42 @@
+## 2026-08-15 12:00
+
+**Added: `inspect_demo` example — embedded-inspect WebSocket debug server on ESP32-S3**
+
+Integrates the `embedded-inspect` workspace (milestones 1–4) into a new ESP32-S3 example that runs a live debug WebSocket server alongside the display.
+
+### New files
+- **`examples/inspect_demo.rs`** — full example binary (no_std, xtensa-esp32s3-none-elf).
+- **`examples/assets/inspect_index.html`** — copy of the browser debug UI from `embedded-inspect-demo`; connects to `ws://<device-ip>:3000/debug`.
+
+### Architecture
+- **Embassy task structure**: `main` owns `Display`; `connection` and `net_task` drive WiFi/TCP; `debug_server` is a separate Embassy task that never blocks display rendering.
+- **Shared state**: `AppState` wrapped in `Mutex<CriticalSectionRawMutex, RefCell<AppState>>` in a `StaticCell`; lock always released before every `.await`.
+- **AppState fields** (all read-only in this milestone):
+  - `NetworkState` — `connected`, `ip_a/b/c/d`, `rssi`
+  - `DisplayInfo` — `refresh_count`, `power_on`
+  - `SystemInfo` — `uptime_secs`, `free_heap`
+  - `ContentState` — `current_page`, `touch_x`, `touch_y`
+- **Protocol**: JSON text WebSocket frames so the existing browser UI works unmodified. Manual `format!()` for output, manual string scanning for input (avoids `serde_json_core` internally-tagged enum limitation).
+- **WebSocket**: `embedded-websocket 0.9` for no_std handshake + frame codec; `httparse` for HTTP Upgrade header parsing.
+- **Push events**: every 2 s the debug task diffs all leaf values against a snapshot and sends `ValueChanged` frames to the browser.
+- **HTTP**: `GET /` serves `inspect_index.html`; WebSocket Upgrade runs the debug session on port 3000.
+
+### Cargo.toml additions
+- `embedded-inspect = { path = "../embedded-inspect/embedded-inspect" }` (xtensa target)
+- `embassy-net` — added `"tcp"` feature; `StackResources<4>` (was 3)
+- `embassy-sync = "0.6"`, `embedded-websocket = { version = "0.9", default-features = false }`, `httparse = { version = "1", default-features = false }`
+- `serde = { version = "1", default-features = false, features = ["derive"] }` (top-level)
+
+### Usage
+```
+export WIFI_SSID=MyNetwork WIFI_PASS=secret
+cargo run --example inspect_demo
+# serial log prints the device IP after DHCP
+# open http://<device-ip>:3000 in a browser
+```
+
+---
+
 ## 2026-07-29
 
 **Modified: `examples/iris_demo.rs` — partial redraw on toggle button click**
