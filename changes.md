@@ -1,3 +1,42 @@
+## 2026-08-15 18:00
+
+**"Log test" button in browser Logs panel**
+
+- `inspect_demo.rs`: added `InMsg::TriggerLog { request_id }`, parsed from `{"type":"TriggerLog"}`.
+  Handler calls `ilog!` three times (Info / Debug / Warn) and replies with `{"type":"TriggerLogAck","request_id":N}`.
+- `inspect_index.html`: added "Log test" button to Logs panel toolbar.
+  Clicking sends `TriggerLog` over WebSocket; the device responds by emitting three live log records visible in the panel.
+
+---
+
+## 2026-08-15 17:00
+
+**Milestone 9: structured live logging**
+
+- `LogLevel` enum (`Trace/Debug/Info/Warn/Error`) and `LogEntry` struct added to `inspect_demo.rs`.
+- `LOG_CHANNEL: Channel<CriticalSectionRawMutex, LogEntry, 64>` — bounded const-initialised global;
+  producers never block, never allocate (beyond the record's heap strings).
+- `DROPPED_COUNT: AtomicU32` — incremented when channel is full; claimed and reset by the debug task.
+- `ilog!(level, target, …)` macro:
+  - Always writes to USB/serial via `esp_println::println!` (existing logging preserved).
+  - Non-blocking enqueues into `LOG_CHANNEL`; increments `DROPPED_COUNT` on overflow.
+- `log_level_str`, `json_escape`, `log_entry_json` helpers for JSON serialisation.
+- `run_ws_session` outer loop drains `LOG_CHANNEL` before each 2s ValueChanged push:
+  claims `DROPPED_COUNT` atomically, embeds count in `dropped_before` field of each record.
+- `ilog!` calls added at: WiFi connect, render cycle start, WebSocket upgrade, client
+  connect/disconnect, `GetScreenshot` dispatch, `Hello` message receipt.
+- Browser `inspect_index.html`: Logs panel added (collapsed by default):
+  - Level filter (default debug+), text search, Pause/Resume, Clear.
+  - Max 500 entries in memory; oldest pruned on overflow.
+  - `requestAnimationFrame`-batched DOM updates for responsiveness under high volume.
+  - `textContent` throughout — no XSS risk.
+  - Auto-scroll; pauses on manual scroll-up, resumes on scroll-to-bottom.
+  - "dropped: N" warning badge in header when any records were lost.
+  - Color-coded by level: trace/debug=muted, info=green, warn=yellow, error=red.
+  - Timestamps formatted as `mm:ss.mmm` relative to page load.
+
+---
+
 ## 2026-08-15 16:00
 
 **Milestone 8: framebuffer screenshot capture**

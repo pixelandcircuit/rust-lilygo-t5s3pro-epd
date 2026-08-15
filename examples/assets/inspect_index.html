@@ -261,6 +261,109 @@ main { flex: 1; padding: 20px 24px 80px }
   image-rendering: pixelated;
   image-rendering: crisp-edges;
 }
+
+/* ── logs panel ──────────────────────────────────────────────── */
+#logs-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+#logs-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+#logs-panel-header:hover { background: #1c2128 }
+#logs-panel-header .chevron { color: var(--muted) }
+#logs-panel-header .struct-label { color: var(--accent) }
+
+#logs-panel.collapsed #logs-panel-body { display: none }
+#logs-panel.collapsed #logs-panel-header .chevron::before { content: '▸' }
+#logs-panel-header .chevron::before { content: '▾' }
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.logs-toolbar select,
+.logs-toolbar input[type="text"] {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.logs-toolbar select:focus,
+.logs-toolbar input[type="text"]:focus { border-color: var(--accent) }
+.logs-toolbar input[type="text"] { width: 140px }
+
+.logs-toolbar button {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.logs-toolbar button:hover {
+  background: #30363d;
+  border-color: var(--accent);
+  color: #fff;
+}
+.logs-toolbar button.paused {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.logs-dropped {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid var(--red);
+  color: var(--red);
+}
+
+#log-list {
+  max-height: 320px;
+  overflow-y: auto;
+  font-family: 'Cascadia Code','Fira Code','Consolas','Courier New',monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 12px;
+}
+
+.log-row { display: flex; gap: 6px; word-break: break-all }
+.log-ts     { color: var(--muted); flex-shrink: 0 }
+.log-level  { font-weight: 600; flex-shrink: 0; min-width: 5ch }
+.log-target { color: var(--accent); flex-shrink: 0 }
+.log-msg    { color: var(--text) }
+
+.log-row.level-trace .log-level,
+.log-row.level-trace .log-msg  { color: var(--muted) }
+.log-row.level-debug .log-level,
+.log-row.level-debug .log-msg  { color: var(--muted) }
+.log-row.level-info  .log-level { color: var(--green) }
+.log-row.level-warn  .log-level,
+.log-row.level-warn  .log-msg  { color: var(--yellow) }
+.log-row.level-error .log-level,
+.log-row.level-error .log-msg  { color: var(--red) }
 </style>
 </head>
 <body>
@@ -298,6 +401,32 @@ main { flex: 1; padding: 20px 24px 80px }
       </div>
     </div>
   </section>
+
+  <!-- ── logs panel ──────────────────────────────────────────────── -->
+  <section id="logs-panel" class="collapsed">
+    <div id="logs-panel-header">
+      <span class="chevron"></span>
+      <span class="struct-label">Logs</span>
+      <span id="logs-count" class="type-tag">0 entries</span>
+      <span id="logs-dropped-badge" class="logs-dropped" style="display:none">dropped: 0</span>
+      <div class="logs-toolbar">
+        <select id="log-level-filter">
+          <option value="0">trace+</option>
+          <option value="1" selected>debug+</option>
+          <option value="2">info+</option>
+          <option value="3">warn+</option>
+          <option value="4">error</option>
+        </select>
+        <input type="text" id="log-search" placeholder="filter…">
+        <button id="log-trigger-btn">Log test</button>
+        <button id="log-pause-btn">Pause</button>
+        <button id="log-clear-btn">Clear</button>
+      </div>
+    </div>
+    <div id="logs-panel-body">
+      <div id="log-list"></div>
+    </div>
+  </section>
 </main>
 
 <div id="events">
@@ -317,6 +446,15 @@ const recentEvts = [];    // last N events for the footer
 let ssMeta    = null;   // ScreenshotBegin payload
 let ssBuffer  = null;   // Uint8Array assembled pixel data
 let ssChunksReceived = 0;
+
+// ─── logs state ─────────────────────────────────────────────────────────────
+const PAGE_LOAD_TIME = Date.now();
+const LOG_MAX = 500;
+const LOG_LEVELS = { trace: 0, debug: 1, info: 2, warn: 3, error: 4 };
+const logEntries = [];
+let logPaused = false;
+let logNeedsRender = false;
+let totalDropped = 0;
 
 // ─── connection ─────────────────────────────────────────────────────────────
 function connect() {
@@ -375,6 +513,10 @@ function dispatch(msg) {
 
     case 'ScreenshotEnd':
       handleScreenshotEnd(msg);
+      break;
+
+    case 'LogRecord':
+      handleLogRecord(msg);
       break;
 
     case 'Error':
@@ -678,6 +820,144 @@ function ssSetProgress(received, total) {
 // ─── screenshot panel toggle ────────────────────────────────────────────────
 document.getElementById('screenshot-panel-header').addEventListener('click', () => {
   document.getElementById('screenshot-panel').classList.toggle('collapsed');
+});
+
+// ─── logs: record handler ────────────────────────────────────────────────────
+function handleLogRecord(msg) {
+  const entry = {
+    ts:      Date.now() - PAGE_LOAD_TIME,
+    level:   msg.level,
+    target:  msg.target,
+    message: msg.message,
+    dropped: msg.dropped_before || 0,
+  };
+  logEntries.push(entry);
+  if (logEntries.length > LOG_MAX) logEntries.splice(0, logEntries.length - LOG_MAX);
+
+  if (entry.dropped > 0) {
+    totalDropped += entry.dropped;
+    const badge = document.getElementById('logs-dropped-badge');
+    badge.textContent = `dropped: ${totalDropped}`;
+    badge.style.display = '';
+  }
+
+  scheduleLogRender();
+}
+
+function scheduleLogRender() {
+  if (logNeedsRender) return;
+  logNeedsRender = true;
+  requestAnimationFrame(renderLogEntries);
+}
+
+function fmtLogTimestamp(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  const min  = Math.floor(totalSec / 60);
+  const sec  = totalSec % 60;
+  const msec = ms % 1000;
+  return `${String(min).padStart(2,'0')}:${String(sec).padStart(2,'0')}.${String(msec).padStart(3,'0')}`;
+}
+
+function renderLogEntries() {
+  logNeedsRender = false;
+
+  const minLevel = parseInt(document.getElementById('log-level-filter').value, 10);
+  const search   = document.getElementById('log-search').value.toLowerCase();
+
+  const filtered = logEntries.filter(e => {
+    if ((LOG_LEVELS[e.level] ?? 0) < minLevel) return false;
+    if (search && !e.target.toLowerCase().includes(search) && !e.message.toLowerCase().includes(search)) return false;
+    return true;
+  });
+
+  document.getElementById('logs-count').textContent = `${filtered.length} entries`;
+
+  const list = document.getElementById('log-list');
+  const atBottom = list.scrollHeight - list.scrollTop <= list.clientHeight + 2;
+
+  // Rebuild safely — no innerHTML with user data
+  list.textContent = '';
+
+  const frag = document.createDocumentFragment();
+  for (const e of filtered) {
+    const row = document.createElement('div');
+    row.className = `log-row level-${e.level}`;
+
+    const tsEl = document.createElement('span');
+    tsEl.className = 'log-ts';
+    tsEl.textContent = `[${fmtLogTimestamp(e.ts)}]`;
+
+    const lvlEl = document.createElement('span');
+    lvlEl.className = 'log-level';
+    lvlEl.textContent = e.level.toUpperCase().padEnd(5);
+
+    const targetEl = document.createElement('span');
+    targetEl.className = 'log-target';
+    targetEl.textContent = `${e.target}:`;
+
+    const msgEl = document.createElement('span');
+    msgEl.className = 'log-msg';
+    msgEl.textContent = e.message;
+
+    row.appendChild(tsEl);
+    row.appendChild(lvlEl);
+    row.appendChild(targetEl);
+    row.appendChild(msgEl);
+    frag.appendChild(row);
+  }
+  list.appendChild(frag);
+
+  if (!logPaused && atBottom) list.scrollTop = list.scrollHeight;
+}
+
+// ─── logs: controls ──────────────────────────────────────────────────────────
+document.getElementById('log-pause-btn').addEventListener('click', () => {
+  logPaused = !logPaused;
+  const btn = document.getElementById('log-pause-btn');
+  btn.textContent = logPaused ? 'Resume' : 'Pause';
+  btn.classList.toggle('paused', logPaused);
+});
+
+document.getElementById('log-trigger-btn').addEventListener('click', () => {
+  send({ type: 'TriggerLog', request_id: nextId++ });
+});
+
+document.getElementById('log-clear-btn').addEventListener('click', () => {
+  logEntries.length = 0;
+  totalDropped = 0;
+  const badge = document.getElementById('logs-dropped-badge');
+  badge.style.display = 'none';
+  badge.textContent = 'dropped: 0';
+  renderLogEntries();
+});
+
+document.getElementById('log-level-filter').addEventListener('change', scheduleLogRender);
+document.getElementById('log-search').addEventListener('input', scheduleLogRender);
+
+// Pause on manual scroll upward; auto-resume when scrolled back to bottom
+document.getElementById('log-list').addEventListener('scroll', () => {
+  const list = document.getElementById('log-list');
+  const atBottom = list.scrollHeight - list.scrollTop <= list.clientHeight + 2;
+  if (atBottom && logPaused) {
+    logPaused = false;
+    const btn = document.getElementById('log-pause-btn');
+    btn.textContent = 'Pause';
+    btn.classList.remove('paused');
+  } else if (!atBottom && !logPaused) {
+    logPaused = true;
+    const btn = document.getElementById('log-pause-btn');
+    btn.textContent = 'Resume';
+    btn.classList.add('paused');
+  }
+});
+
+// ─── logs panel toggle ────────────────────────────────────────────────────────
+document.getElementById('logs-panel-header').addEventListener('click', () => {
+  document.getElementById('logs-panel').classList.toggle('collapsed');
+});
+// Prevent toolbar clicks from toggling collapse
+document.querySelector('#logs-panel-header .logs-toolbar').addEventListener('click', e => {
+  e.stopPropagation();
 });
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
