@@ -1,3 +1,32 @@
+## 2026-08-15 13:00
+
+**Updated: `inspect_demo` — enforce debug infrastructure isolation rules**
+
+Three correctness rules enforced:
+
+1. **Debug infrastructure must not own or globally lock AppState.**
+   - `build_schema` was previously called while holding `CriticalSectionRawMutex`
+     (which disables all interrupts), performing recursive allocation inside the
+     critical section. Fixed by building the schema from `AppState::default()` —
+     schema is purely structural (`'static` field metadata), so no lock is needed.
+
+2. **State must be inspected through snapshots, not repeated lock acquisitions.**
+   - The 2-second diff loop was taking one `state.lock()` per leaf field, causing
+     N separate interrupt-disabled windows per tick. Fixed by taking a single
+     `state.lock(|c| c.borrow().clone())` snapshot, then doing all comparison and
+     WebSocket I/O outside the lock with interrupts re-enabled.
+   - Added `#[derive(Clone)]` to all five AppState structs to support this.
+
+3. **The debugger must be optional and removable with a Cargo feature.**
+   - Added `debug-inspect` feature to `Cargo.toml` that gates all debug deps
+     (`embassy-sync`, `embedded-inspect`, `embedded-websocket`, `httparse`) and
+     activates `embassy-net/tcp`. The `tcp` feature is no longer unconditional.
+   - Added `required-features = ["debug-inspect"]` to the `inspect_demo` example
+     entry so `cargo build` without the feature flag will not compile it.
+   - Build: `cargo run --example inspect_demo --features debug-inspect`
+
+---
+
 ## 2026-08-15 12:00
 
 **Added: `inspect_demo` example — embedded-inspect WebSocket debug server on ESP32-S3**

@@ -52,7 +52,7 @@ const INDEX_HTML: &[u8] = include_bytes!("assets/inspect_index.html");
 
 // ── AppState ──────────────────────────────────────────────────────────────────
 
-#[derive(DebugInspect, Default)]
+#[derive(DebugInspect, Default, Clone)]
 struct NetworkState {
     #[inspect(read_only)] connected: bool,
     #[inspect(read_only)] ip_a:      u8,
@@ -62,26 +62,26 @@ struct NetworkState {
     #[inspect(read_only)] rssi:      i8,
 }
 
-#[derive(DebugInspect, Default)]
+#[derive(DebugInspect, Default, Clone)]
 struct DisplayInfo {
     #[inspect(read_only)] refresh_count: u32,
     #[inspect(read_only)] power_on:      bool,
 }
 
-#[derive(DebugInspect, Default)]
+#[derive(DebugInspect, Default, Clone)]
 struct SystemInfo {
     #[inspect(read_only)] uptime_secs: u32,
     #[inspect(read_only)] free_heap:   u32,
 }
 
-#[derive(DebugInspect, Default)]
+#[derive(DebugInspect, Default, Clone)]
 struct ContentState {
     #[inspect(read_only)] current_page: u32,
     #[inspect(read_only)] touch_x:      u16,
     #[inspect(read_only)] touch_y:      u16,
 }
 
-#[derive(DebugInspect, Default)]
+#[derive(DebugInspect, Default, Clone)]
 struct AppState {
     #[inspect(read_only)] network: NetworkState,
     #[inspect(read_only)] display: DisplayInfo,
@@ -372,10 +372,9 @@ async fn run_ws_session(
     sock:  &mut TcpSocket<'_>,
     state: &'static SharedState,
 ) {
-    let schema = state.lock(|cell| {
-        let app = cell.borrow();
-        build_schema(&*app)
-    });
+    // Schema is purely structural ('static field metadata) — build from default
+    // values so we never hold the critical section during recursive allocation.
+    let schema = build_schema(&AppState::default());
     let schema_json = schema_to_json(&schema);
 
     let mut leaf_paths: Vec<String> = Vec::new();
@@ -392,13 +391,12 @@ async fn run_ws_session(
 
     'outer: loop {
         // Push ValueChanged events every 2 s.
+        // Take one snapshot under a single brief critical section, then do all
+        // comparison and I/O outside the lock so interrupts stay enabled.
         if Instant::now() - last_event >= Duration::from_secs(2) {
+            let snap: AppState = state.lock(|cell| cell.borrow().clone());
             for (i, path) in leaf_paths.iter().enumerate() {
-                let new_val = state.lock(|cell| {
-                    let app = cell.borrow();
-                    app.get_field_path(path).map(debug_value_to_json)
-                });
-                if let Some(val) = new_val {
+                if let Some(val) = snap.get_field_path(path).map(debug_value_to_json) {
                     if snapshot[i] != val {
                         snapshot[i] = val.clone();
                         let msg = changed_resp(path, &val, seq);

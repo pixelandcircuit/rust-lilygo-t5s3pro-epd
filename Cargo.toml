@@ -28,21 +28,31 @@ esp-rtos               = { version = "0.3.0",  features = ["esp32s3", "esp-radio
 embedded-sdmmc         = { version = "0.9", default-features = false }
 embedded-hal-bus       = "0.2"
 embassy-executor       = "0.10.0"
-embassy-net            = { version = "0.8.0",  features = ["dhcpv4", "medium-ethernet", "udp", "tcp"] }
-embassy-sync           = "0.6"
+embassy-net            = { version = "0.8.0",  features = ["dhcpv4", "medium-ethernet", "udp"] }
+embassy-sync           = { version = "0.6",   optional = true }
 embassy-time           = "0.5.0"
 static_cell            = "2.1.0"
-embedded-inspect       = { path = "../embedded-inspect/embedded-inspect" }
-embedded-websocket     = { version = "0.9", default-features = false }
-httparse               = { version = "1", default-features = false }
-serde-json-core        = "0.5"
+embedded-inspect       = { path = "../embedded-inspect/embedded-inspect", optional = true }
+embedded-websocket     = { version = "0.9", default-features = false, optional = true }
+httparse               = { version = "1",   default-features = false, optional = true }
 
 [features]
-sim = ["iris-ui/std", "dep:embedded-graphics-simulator"]
+sim           = ["iris-ui/std", "dep:embedded-graphics-simulator"]
+debug-inspect = [
+    "dep:embassy-sync",
+    "dep:embedded-inspect",
+    "dep:embedded-websocket",
+    "dep:httparse",
+    "embassy-net/tcp",
+]
 
 [[example]]
 name = "iris_demo_sim"
 required-features = ["sim"]
+
+[[example]]
+name = "inspect_demo"
+required-features = ["debug-inspect"]
 
 [profile.dev]
 opt-level = "s"
