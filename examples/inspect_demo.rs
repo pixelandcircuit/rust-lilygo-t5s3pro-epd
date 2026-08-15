@@ -92,6 +92,27 @@ struct AppState {
 type SharedState = Mutex<CriticalSectionRawMutex, RefCell<AppState>>;
 static STATE: StaticCell<SharedState> = StaticCell::new();
 
+// ── Framebuffer snapshot ───────────────────────────────────────────────────────
+//
+// Synchronization strategy (see DESIGN.md §Screenshot):
+//   main copies 259 KB to PSRAM Vec OUTSIDE any lock (interrupts stay enabled,
+//   ~3 ms at 80 MB/s), then moves the pointer into the Option under a brief
+//   critical section (pointer swap only, ~µs).
+//   The debug task reads 4 KB chunks at a time, each under a ~50 µs lock,
+//   so rendering is never blocked during network I/O.
+
+const FB_WIDTH:   u16   = Display::WIDTH;
+const FB_HEIGHT:  u16   = Display::HEIGHT;
+const CHUNK_SIZE: usize = 4096;
+
+struct FramebufferSnapshot {
+    data:       Vec<u8>,
+    capture_id: u32,
+}
+
+type FbState = Mutex<CriticalSectionRawMutex, RefCell<Option<FramebufferSnapshot>>>;
+static FB_STATE: StaticCell<FbState> = StaticCell::new();
+
 // ── I/O helper ────────────────────────────────────────────────────────────────
 
 // embassy-net's TcpSocket::write may return fewer bytes than requested.
@@ -234,21 +255,23 @@ fn json_u32_field(json: &str, key: &str) -> Option<u32> {
 // ── Protocol messages ─────────────────────────────────────────────────────────
 
 enum InMsg<'a> {
-    Hello     { request_id: u32 },
-    GetSchema { request_id: u32 },
-    GetValue  { request_id: u32, path: &'a str },
+    Hello         { request_id: u32 },
+    GetSchema     { request_id: u32 },
+    GetValue      { request_id: u32, path: &'a str },
+    GetScreenshot { request_id: u32 },
     Unknown,
 }
 
 fn parse_msg(json: &str) -> InMsg<'_> {
     let request_id = json_u32_field(json, "request_id").unwrap_or(0);
     match json_str_field(json, "type") {
-        Some("Hello")     => InMsg::Hello { request_id },
-        Some("GetSchema") => InMsg::GetSchema { request_id },
-        Some("GetValue")  => InMsg::GetValue {
+        Some("Hello")         => InMsg::Hello { request_id },
+        Some("GetSchema")     => InMsg::GetSchema { request_id },
+        Some("GetValue")      => InMsg::GetValue {
             request_id,
             path: json_str_field(json, "path").unwrap_or(""),
         },
+        Some("GetScreenshot") => InMsg::GetScreenshot { request_id },
         _ => InMsg::Unknown,
     }
 }
@@ -267,6 +290,113 @@ fn error_resp(rid: u32, code: &str, msg: &str) -> String {
 }
 fn changed_resp(path: &str, value: &str, seq: u32) -> String {
     format!(r#"{{"type":"ValueChanged","path":"{}","value":{},"sequence":{}}}"#, path, value, seq)
+}
+fn screenshot_begin_resp(capture_id: u32, total_bytes: u32, chunk_size: u16, total_chunks: u32) -> String {
+    format!(
+        r#"{{"type":"ScreenshotBegin","capture_id":{},"width":{},"height":{},"format":"Gray4","total_bytes":{},"chunk_size":{},"total_chunks":{}}}"#,
+        capture_id, FB_WIDTH, FB_HEIGHT, total_bytes, chunk_size, total_chunks,
+    )
+}
+fn screenshot_end_resp(capture_id: u32, total_chunks: u32, total_checksum: u32) -> String {
+    format!(
+        r#"{{"type":"ScreenshotEnd","capture_id":{},"total_chunks":{},"total_checksum":{}}}"#,
+        capture_id, total_chunks, total_checksum,
+    )
+}
+fn screenshot_unavailable_resp(rid: u32) -> String {
+    error_resp(rid, "NoSnapshot", "no framebuffer snapshot available yet; wait for the next render cycle")
+}
+
+fn wrapping_checksum(data: &[u8]) -> u32 {
+    data.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
+}
+
+// Copies the current framebuffer to a PSRAM snapshot outside any lock (~3 ms at
+// 80 MB/s), then moves the pointer into FB_STATE under a brief critical section
+// (~µs).  Must be called after render_status() and before flush(BlackOnWhite).
+fn capture_framebuffer(display: &mut Display, fb_state: &'static FbState, capture_id: &mut u32) {
+    let data = Vec::from(display.framebuffer());
+    *capture_id = capture_id.wrapping_add(1);
+    let id = *capture_id;
+    fb_state.lock(|cell| {
+        *cell.borrow_mut() = Some(FramebufferSnapshot { data, capture_id: id });
+    });
+    esp_println::println!("[inspect] framebuffer captured (id={})", id);
+}
+
+// Streams a screenshot to the connected browser client.
+// Returns false if the socket died during the transfer.
+async fn send_screenshot(
+    ws:         &mut WebSocketServer,
+    sock:       &mut TcpSocket<'_>,
+    fb_state:   &'static FbState,
+    request_id: u32,
+    tx_buf:     &mut Vec<u8>,
+) -> bool {
+    let meta = fb_state.lock(|cell| {
+        cell.borrow().as_ref().map(|s| (s.capture_id, s.data.len() as u32))
+    });
+
+    let (capture_id, total_bytes) = match meta {
+        None => {
+            let msg = screenshot_unavailable_resp(request_id);
+            let n = ws.write(WebSocketSendMessageType::Text, true, msg.as_bytes(), tx_buf).unwrap_or(0);
+            return write_all(sock, &tx_buf[..n]).await.is_ok();
+        }
+        Some(m) => m,
+    };
+
+    let total_chunks = ((total_bytes as usize + CHUNK_SIZE - 1) / CHUNK_SIZE) as u32;
+
+    let begin = screenshot_begin_resp(capture_id, total_bytes, CHUNK_SIZE as u16, total_chunks);
+    let n = ws.write(WebSocketSendMessageType::Text, true, begin.as_bytes(), tx_buf).unwrap_or(0);
+    if write_all(sock, &tx_buf[..n]).await.is_err() { return false; }
+
+    esp_println::println!("[inspect] screenshot: streaming {} chunks for capture_id={}", total_chunks, capture_id);
+
+    // Binary frame payload: 8-byte header (capture_id LE + chunk_index LE) + pixel data.
+    let mut pixel_frame = vec![0u8; CHUNK_SIZE + 8];
+    // WebSocket-encoded output buffer (server frames are unmasked; max framing overhead = 4 bytes).
+    let mut ws_frame = vec![0u8; CHUNK_SIZE + 8 + 16];
+    let mut total_checksum: u32 = 0;
+
+    for chunk_index in 0..total_chunks {
+        let offset    = chunk_index as usize * CHUNK_SIZE;
+        let end       = (offset + CHUNK_SIZE).min(total_bytes as usize);
+        let chunk_len = end - offset;
+
+        pixel_frame[0..4].copy_from_slice(&capture_id.to_le_bytes());
+        pixel_frame[4..8].copy_from_slice(&chunk_index.to_le_bytes());
+
+        // Copy chunk data under a brief critical section (~50 µs at 80 MB/s).
+        let ok = fb_state.lock(|cell| {
+            if let Some(snap) = cell.borrow().as_ref() {
+                if snap.capture_id == capture_id {
+                    pixel_frame[8..8 + chunk_len].copy_from_slice(&snap.data[offset..end]);
+                    return true;
+                }
+            }
+            false
+        });
+        if !ok {
+            // Snapshot was replaced mid-transfer; browser will detect missing ScreenshotEnd.
+            esp_println::println!("[inspect] screenshot: snapshot replaced mid-transfer, aborting");
+            return true;
+        }
+
+        total_checksum = total_checksum.wrapping_add(wrapping_checksum(&pixel_frame[8..8 + chunk_len]));
+
+        let n = ws.write(WebSocketSendMessageType::Binary, true, &pixel_frame[..8 + chunk_len], &mut ws_frame).unwrap_or(0);
+        if write_all(sock, &ws_frame[..n]).await.is_err() { return false; }
+    }
+
+    let end_msg = screenshot_end_resp(capture_id, total_chunks, total_checksum);
+    let n = ws.write(WebSocketSendMessageType::Text, true, end_msg.as_bytes(), tx_buf).unwrap_or(0);
+    let ok = write_all(sock, &tx_buf[..n]).await.is_ok();
+    if ok {
+        esp_println::println!("[inspect] screenshot: done (checksum={})", total_checksum);
+    }
+    ok
 }
 
 // ── Embassy tasks ─────────────────────────────────────────────────────────────
@@ -293,7 +423,7 @@ async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
 }
 
 #[embassy_executor::task]
-async fn debug_server(stack: Stack<'static>, state: &'static SharedState) {
+async fn debug_server(stack: Stack<'static>, state: &'static SharedState, fb_state: &'static FbState) {
     let mut rx_storage = vec![0u8; 2048];
     let mut tx_storage = vec![0u8; 2048];
 
@@ -308,7 +438,7 @@ async fn debug_server(stack: Stack<'static>, state: &'static SharedState) {
         }
 
         esp_println::println!("[inspect] client connected");
-        handle_connection(&mut socket, state).await;
+        handle_connection(&mut socket, state, fb_state).await;
 
         socket.close();
         socket.flush().await.ok();
@@ -319,7 +449,7 @@ async fn debug_server(stack: Stack<'static>, state: &'static SharedState) {
 
 // ── HTTP + WebSocket connection handler ───────────────────────────────────────
 
-async fn handle_connection(socket: &mut TcpSocket<'_>, state: &'static SharedState) {
+async fn handle_connection(socket: &mut TcpSocket<'_>, state: &'static SharedState, fb_state: &'static FbState) {
     let mut http_buf = vec![0u8; 1536];
     let mut http_len = 0usize;
 
@@ -351,7 +481,7 @@ async fn handle_connection(socket: &mut TcpSocket<'_>, state: &'static SharedSta
             };
             write_all(socket, &resp_buf[..n]).await.ok();
             esp_println::println!("[inspect] WebSocket upgrade OK");
-            run_ws_session(&mut ws, socket, state).await;
+            run_ws_session(&mut ws, socket, state, fb_state).await;
         }
         _ => {
             // Plain HTTP — serve browser UI.
@@ -368,9 +498,10 @@ async fn handle_connection(socket: &mut TcpSocket<'_>, state: &'static SharedSta
 // ── WebSocket session ─────────────────────────────────────────────────────────
 
 async fn run_ws_session(
-    ws:    &mut WebSocketServer,
-    sock:  &mut TcpSocket<'_>,
-    state: &'static SharedState,
+    ws:       &mut WebSocketServer,
+    sock:     &mut TcpSocket<'_>,
+    state:    &'static SharedState,
+    fb_state: &'static FbState,
 ) {
     // Schema is purely structural ('static field metadata) — build from default
     // values so we never hold the critical section during recursive allocation.
@@ -423,18 +554,40 @@ async fn run_ws_session(
             Ok(Ok(n))              => buf_used += n,
         }
 
-        loop {
-            if buf_used == 0 { break; }
+        'inner: loop {
+            if buf_used == 0 { break 'inner; }
             match ws.read(&rx_buf[..buf_used], &mut pl_buf) {
-                Err(_)               => break 'outer,
-                Ok(r) if r.len_from == 0 => break,
+                Err(_)                   => break 'outer,
+                Ok(r) if r.len_from == 0 => break 'inner,
                 Ok(r) => {
+                    // Shift buffer before any await so we don't borrow rx_buf across awaits.
+                    let consumed = r.len_from;
+                    rx_buf.copy_within(consumed..buf_used, 0);
+                    buf_used -= consumed;
                     let payload = &pl_buf[..r.len_to];
-                    let reply: Option<String> = match r.message_type {
+
+                    match r.message_type {
                         WebSocketReceiveMessageType::Text => {
                             match core::str::from_utf8(payload) {
-                                Ok(json) => Some(handle_msg(json, state, &schema_json)),
-                                Err(_)   => Some(error_resp(0, "BadEncoding", "non-UTF-8")),
+                                Ok(json) => match parse_msg(json) {
+                                    InMsg::GetScreenshot { request_id } => {
+                                        if !send_screenshot(ws, sock, fb_state, request_id, &mut tx_buf).await {
+                                            break 'outer;
+                                        }
+                                        // After async work, break to outer loop to re-poll TCP.
+                                        break 'inner;
+                                    }
+                                    _ => {
+                                        let reply = handle_msg(json, state, &schema_json);
+                                        let n = ws.write(WebSocketSendMessageType::Text, true, reply.as_bytes(), &mut tx_buf).unwrap_or(0);
+                                        if write_all(sock, &tx_buf[..n]).await.is_err() { break 'outer; }
+                                    }
+                                },
+                                Err(_) => {
+                                    let msg = error_resp(0, "BadEncoding", "non-UTF-8");
+                                    let n = ws.write(WebSocketSendMessageType::Text, true, msg.as_bytes(), &mut tx_buf).unwrap_or(0);
+                                    if write_all(sock, &tx_buf[..n]).await.is_err() { break 'outer; }
+                                }
                             }
                         }
                         WebSocketReceiveMessageType::CloseMustReply => {
@@ -446,21 +599,10 @@ async fn run_ws_session(
                         WebSocketReceiveMessageType::Ping => {
                             let n = ws.write(WebSocketSendMessageType::Pong, true, payload, &mut tx_buf)
                                 .unwrap_or(0);
-                            write_all(sock, &tx_buf[..n]).await.ok();
-                            None
+                            if write_all(sock, &tx_buf[..n]).await.is_err() { break 'outer; }
                         }
-                        _ => None,
-                    };
-
-                    if let Some(text) = reply {
-                        let n = ws.write(WebSocketSendMessageType::Text, true, text.as_bytes(), &mut tx_buf)
-                            .unwrap_or(0);
-                        if write_all(sock, &tx_buf[..n]).await.is_err() { break 'outer; }
+                        _ => {}
                     }
-
-                    let consumed = r.len_from;
-                    rx_buf.copy_within(consumed..buf_used, 0);
-                    buf_used -= consumed;
                 }
             }
         }
@@ -482,7 +624,8 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
                                &format!("no field at path: {}", path)),
             }
         }
-        InMsg::Unknown => error_resp(0, "UnknownMessage", "unrecognised message type"),
+        InMsg::GetScreenshot { .. } | InMsg::Unknown =>
+            error_resp(0, "UnknownMessage", "unrecognised message type"),
     }
 }
 
@@ -500,6 +643,8 @@ async fn main(spawner: Spawner) -> ! {
 
     let state: &'static SharedState =
         STATE.init(Mutex::new(RefCell::new(AppState::default())));
+    let fb_state: &'static FbState =
+        FB_STATE.init(Mutex::new(RefCell::new(None)));
 
     let mut display = Display::new(
         epaper::pin_config!(peripherals),
@@ -534,7 +679,7 @@ async fn main(spawner: Spawner) -> ! {
 
     spawner.spawn(net_task(runner).expect("net_task"));
     spawner.spawn(connection(controller).expect("connection"));
-    spawner.spawn(debug_server(stack, state).expect("debug_server"));
+    spawner.spawn(debug_server(stack, state, fb_state).expect("debug_server"));
 
     esp_println::println!("[inspect] connecting to '{}'...", SSID);
     stack.wait_config_up().await;
@@ -556,9 +701,10 @@ async fn main(spawner: Spawner) -> ! {
         });
     }
 
-    let boot          = Instant::now();
-    let mut refreshes = 0u32;
-    let mut last_draw = 0u32;
+    let boot                   = Instant::now();
+    let mut refreshes          = 0u32;
+    let mut last_draw          = 0u32;
+    let mut fb_capture_id: u32 = 0;
 
     loop {
         let uptime = (Instant::now() - boot).as_secs() as u32;
@@ -576,6 +722,8 @@ async fn main(spawner: Spawner) -> ! {
             display.flush(DrawMode::WhiteOnBlack).unwrap();
             // Pass 2: render new content.
             render_status(&mut display, state);
+            // Capture framebuffer snapshot BEFORE flush resets it to 0xFF.
+            capture_framebuffer(&mut display, fb_state, &mut fb_capture_id);
             display.flush(DrawMode::BlackOnWhite).unwrap();
             refreshes += 1;
             state.lock(|cell| cell.borrow_mut().display.refresh_count = refreshes);

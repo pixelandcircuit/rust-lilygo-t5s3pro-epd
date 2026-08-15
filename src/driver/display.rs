@@ -128,6 +128,18 @@ impl<'a> Display<'a> {
         Ok(())
     }
 
+    /// Raw framebuffer bytes for screenshot capture.
+    ///
+    /// Layout: 4 bpp Gray4, 2 pixels per byte, row-major.
+    /// Byte at `x/2 + y * (WIDTH/2)`: low nibble = even column, high nibble = odd column.
+    /// Values 0x0 (black) … 0xF (white).
+    ///
+    /// **Important**: `flush()` resets the framebuffer to `0xFF` (all-white) after
+    /// sending to the panel. Capture after `render_*()` but before `flush()`.
+    pub fn framebuffer(&self) -> &[u8] {
+        &*self.framebuffer
+    }
+
     pub fn fill(&mut self, color: u8) -> Result<()> {
         debug!("display fill");
         if color > 0x0F {

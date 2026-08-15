@@ -1,3 +1,35 @@
+## 2026-08-15 16:00
+
+**Milestone 8: framebuffer screenshot capture**
+
+- `Display::framebuffer()` getter added to expose the raw 4bpp Gray4 byte slice.
+- `FB_STATE` (`StaticCell<FbState>`) stores a PSRAM `FramebufferSnapshot` (capture_id + 259 KB Vec).
+- `capture_framebuffer()` — called after `render_status()` and before `flush(BlackOnWhite)`:
+  - Copies 259 KB from the framebuffer into a PSRAM Vec **outside any lock** (~3 ms, interrupts enabled).
+  - Swaps the pointer into `FB_STATE` under a brief critical section (~µs).
+- `send_screenshot()` — async helper that streams chunks on demand:
+  - `ScreenshotBegin` JSON text frame (dimensions, format, chunk layout, capture_id).
+  - 64 × binary WebSocket frames: `[u32 LE capture_id][u32 LE chunk_index][4096 B pixel data]`.
+    Each chunk is read under a ~50 µs critical section; writing and yielding happen outside the lock.
+  - `ScreenshotEnd` JSON text frame with total wrapping-u32 checksum.
+  - If no snapshot is available yet, sends an `Error/NoSnapshot` reply instead.
+  - If the snapshot is replaced mid-transfer (next render cycle), aborts silently.
+- `run_ws_session` inner parse loop restructured:
+  - `GetScreenshot` is detected before `handle_msg`; async streaming runs inline.
+  - Buffer shift happens before any `.await` so rx_buf is never borrowed across yield points.
+  - Inner loop is labeled `'inner:` so `break 'inner` cleanly returns to the outer select.
+- `handle_msg` reverts to returning `String` (no longer `Option<String>`).
+- `debug_server` task now takes `fb_state: &'static FbState` parameter.
+- Browser-side (`inspect_index.html`): binary frame handler, Gray4→ImageData converter,
+  chunk assembler with capture_id validation, checksum verification, progress bar, "Save PNG".
+- Protocol crate (`embedded-inspect-protocol`):
+  - New types: `PixelFormat`, `GetScreenshot`, `ScreenshotBegin`, `ScreenshotChunk`, `ScreenshotEnd`.
+  - `screenshot_checksum()` helper (wrapping u32 sum).
+  - 24 new tests added (round-trip, chunk assembly, Gray4/Mono1 pixel conversion); 89 tests total.
+- `DESIGN.md` updated with full §Screenshot Capture section.
+
+---
+
 ## 2026-08-15 15:00
 
 **Updated: `inspect_demo` — two-pass erase before each screen refresh**

@@ -150,6 +150,117 @@ main { flex: 1; padding: 20px 24px 80px }
 .ev-item { flex-shrink: 0 }
 .ev-path { color: var(--accent) }
 .ev-val  { color: var(--orange) }
+
+/* ── screenshot panel ────────────────────────────────────────── */
+#screenshot-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+#screenshot-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+#screenshot-panel-header:hover { background: #1c2128 }
+#screenshot-panel-header .chevron { color: var(--muted) }
+#screenshot-panel-header .struct-label { color: var(--accent) }
+
+#screenshot-panel-body {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+#screenshot-panel.collapsed #screenshot-panel-body { display: none }
+#screenshot-panel.collapsed #screenshot-panel-header .chevron::before { content: '▸' }
+#screenshot-panel-header .chevron::before { content: '▾' }
+
+.ss-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ss-btn {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.ss-btn:hover:not(:disabled) {
+  background: #30363d;
+  border-color: var(--accent);
+  color: #fff;
+}
+.ss-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+.ss-btn.primary {
+  background: #0d419d;
+  border-color: var(--accent);
+  color: #fff;
+}
+.ss-btn.primary:hover:not(:disabled) { background: #1158c7 }
+
+#ss-status {
+  font-size: 12px;
+  color: var(--muted);
+  min-height: 18px;
+}
+#ss-status.error { color: var(--red) }
+#ss-status.ok    { color: var(--green) }
+
+#ss-progress-wrap {
+  display: none;
+  align-items: center;
+  gap: 10px;
+}
+#ss-progress-wrap.visible { display: flex }
+#ss-progress {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  max-width: 320px;
+}
+#ss-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width .1s linear;
+  border-radius: 3px;
+}
+
+#ss-canvas-wrap {
+  display: none;
+}
+#ss-canvas-wrap.visible { display: block }
+
+#ss-canvas {
+  display: block;
+  width: 480px;
+  height: 270px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
 </style>
 </head>
 <body>
@@ -163,6 +274,30 @@ main { flex: 1; padding: 20px 24px 80px }
 
 <main>
   <div id="tree" class="tree"></div>
+
+  <!-- ── screenshot panel ─────────────────────────────────────── -->
+  <section id="screenshot-panel" class="collapsed">
+    <div id="screenshot-panel-header">
+      <span class="chevron"></span>
+      <span class="struct-label">Screenshot</span>
+      <span class="type-tag">Gray4 · 960×540</span>
+    </div>
+    <div id="screenshot-panel-body">
+      <div class="ss-toolbar">
+        <button class="ss-btn primary" id="ss-capture-btn" onclick="requestScreenshot()">Screenshot</button>
+        <button class="ss-btn" id="ss-test-btn" onclick="testScreenshot()">Test Screenshot</button>
+        <button class="ss-btn" id="ss-save" disabled onclick="saveScreenshot()">Save PNG</button>
+      </div>
+      <div id="ss-status">Ready.</div>
+      <div id="ss-progress-wrap">
+        <div id="ss-progress"><div id="ss-progress-bar"></div></div>
+        <span id="ss-progress-label" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <div id="ss-canvas-wrap">
+        <canvas id="ss-canvas" width="960" height="540"></canvas>
+      </div>
+    </div>
+  </section>
 </main>
 
 <div id="events">
@@ -178,15 +313,27 @@ let ws, nextId = 1;
 const pending = {};       // request_id → resolve fn
 const recentEvts = [];    // last N events for the footer
 
+// ─── screenshot state ───────────────────────────────────────────────────────
+let ssMeta    = null;   // ScreenshotBegin payload
+let ssBuffer  = null;   // Uint8Array assembled pixel data
+let ssChunksReceived = 0;
+
 // ─── connection ─────────────────────────────────────────────────────────────
 function connect() {
   const url = `ws://${location.host}/debug`;
   ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
 
   ws.onopen  = ()    => send({ type:'Hello', request_id: nextId++, version:1, client_name:'browser' });
   ws.onclose = ()    => { setStatus('warn','Disconnected — retrying…'); setTimeout(connect,3000) };
   ws.onerror = ()    => setStatus('warn','Connection error');
-  ws.onmessage = ({data}) => { try { dispatch(JSON.parse(data)) } catch(e) { console.error(e) } };
+  ws.onmessage = ({data}) => {
+    if (data instanceof ArrayBuffer) {
+      handleBinaryFrame(data);
+    } else {
+      try { dispatch(JSON.parse(data)) } catch(e) { console.error(e) }
+    }
+  };
 }
 
 function send(msg) {
@@ -220,6 +367,14 @@ function dispatch(msg) {
     case 'ValueChanged':
       setValue(msg.path, msg.value);
       logEvent(msg.path, msg.value, msg.sequence);
+      break;
+
+    case 'ScreenshotBegin':
+      handleScreenshotBegin(msg);
+      break;
+
+    case 'ScreenshotEnd':
+      handleScreenshotEnd(msg);
       break;
 
     case 'Error':
@@ -350,6 +505,180 @@ function logEvent(path, value, seq) {
     `<span class="ev-item">#${e.seq}&nbsp;<span class="ev-path">${e.path}</span>&nbsp;=&nbsp;<span class="ev-val">${fmt(e.value)}</span></span>`
   ).join('');
 }
+
+// ─── screenshot: outgoing ───────────────────────────────────────────────────
+function requestScreenshot() {
+  ssReset();
+  ssSetStatus('', 'Requesting…');
+  send({ type: 'GetScreenshot', request_id: nextId++, format: 'Gray4' });
+  // expand the panel if collapsed
+  document.getElementById('screenshot-panel').classList.remove('collapsed');
+}
+
+// ─── screenshot: incoming text frames ──────────────────────────────────────
+function handleScreenshotBegin(msg) {
+  ssMeta = {
+    capture_id:   msg.capture_id,
+    width:        msg.width,
+    height:       msg.height,
+    format:       msg.format,
+    total_bytes:  msg.total_bytes,
+    chunk_size:   msg.chunk_size,
+    total_chunks: msg.total_chunks,
+  };
+  ssBuffer = new Uint8Array(msg.total_bytes);
+  ssChunksReceived = 0;
+  ssSetProgress(0, msg.total_chunks);
+  ssShowProgress(true);
+  ssSetStatus('', `0/${msg.total_chunks} chunks`);
+}
+
+function handleScreenshotEnd(msg) {
+  if (!ssMeta || msg.capture_id !== ssMeta.capture_id) return;
+
+  if (ssChunksReceived !== ssMeta.total_chunks) {
+    ssSetStatus('error', `Chunk mismatch: got ${ssChunksReceived}, expected ${ssMeta.total_chunks}`);
+    ssShowProgress(false);
+    return;
+  }
+
+  // Checksum: sum all bytes as wrapping uint32
+  const checksum = ssBuffer.reduce((s, b) => (s + b) >>> 0, 0);
+  if (checksum !== msg.total_checksum) {
+    ssSetStatus('error', `Checksum mismatch: got ${checksum}, expected ${msg.total_checksum}`);
+    ssShowProgress(false);
+    return;
+  }
+
+  ssShowProgress(false);
+  renderScreenshot(ssBuffer, ssMeta.width, ssMeta.height);
+  ssSetStatus('ok', `Complete — ${ssMeta.width}×${ssMeta.height} Gray4`);
+  document.getElementById('ss-save').disabled = false;
+}
+
+// ─── screenshot: incoming binary frames ────────────────────────────────────
+function handleBinaryFrame(buf) {
+  if (!ssMeta || !ssBuffer) return;
+
+  const view = new DataView(buf);
+  const captureId  = view.getUint32(0, true);   // little-endian
+  const chunkIndex = view.getUint32(4, true);   // little-endian
+  const pixelData  = new Uint8Array(buf, 8);
+
+  if (captureId !== ssMeta.capture_id) return;
+
+  const offset = chunkIndex * ssMeta.chunk_size;
+  ssBuffer.set(pixelData, offset);
+  ssChunksReceived++;
+
+  ssSetProgress(ssChunksReceived, ssMeta.total_chunks);
+  ssSetStatus('', `${ssChunksReceived}/${ssMeta.total_chunks} chunks`);
+}
+
+// ─── screenshot: Gray4 → ImageData ─────────────────────────────────────────
+function gray4ToImageData(pixels, width, height) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  const halfWidth = width / 2;
+  for (let i = 0; i < pixels.length; i++) {
+    const byte = pixels[i];
+    const lo = (byte & 0x0F) * 17;          // even col (left pixel)
+    const hi = ((byte >> 4) & 0x0F) * 17;   // odd col  (right pixel)
+    const col = (i % halfWidth) * 2;
+    const row = Math.floor(i / halfWidth);
+    const base0 = (row * width + col) * 4;
+    const base1 = base0 + 4;
+    data[base0]   = data[base0+1] = data[base0+2] = lo; data[base0+3] = 255;
+    data[base1]   = data[base1+1] = data[base1+2] = hi; data[base1+3] = 255;
+  }
+  return new ImageData(data, width, height);
+}
+
+function renderScreenshot(pixels, width, height) {
+  const canvas = document.getElementById('ss-canvas');
+  canvas.width  = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.putImageData(gray4ToImageData(pixels, width, height), 0, 0);
+  document.getElementById('ss-canvas-wrap').classList.add('visible');
+}
+
+// ─── screenshot: save PNG ───────────────────────────────────────────────────
+function saveScreenshot() {
+  const canvas = document.getElementById('ss-canvas');
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL('image/png');
+  a.download = `screenshot-${Date.now()}.png`;
+  a.click();
+}
+
+// ─── screenshot: synthetic test ─────────────────────────────────────────────
+function syntheticFramebuffer(width, height) {
+  const halfWidth = width / 2;
+  const bytes = new Uint8Array(halfWidth * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x += 2) {
+      const lo = Math.floor((x / width) * 16) & 0xF;
+      const hi = Math.floor(((x + 1) / width) * 16) & 0xF;
+      bytes[y * halfWidth + x / 2] = (hi << 4) | lo;
+    }
+  }
+  return bytes;
+}
+
+function testScreenshot() {
+  const width = 960, height = 540;
+  ssReset();
+  document.getElementById('screenshot-panel').classList.remove('collapsed');
+  ssSetStatus('', 'Running synthetic test…');
+
+  const pixels = syntheticFramebuffer(width, height);
+
+  // Simulate the assembly pipeline directly
+  ssMeta = { capture_id: 0, width, height, format: 'Gray4',
+             total_bytes: pixels.length, chunk_size: 4096,
+             total_chunks: Math.ceil(pixels.length / 4096) };
+  ssBuffer = new Uint8Array(pixels.length);
+  ssBuffer.set(pixels);
+  ssChunksReceived = ssMeta.total_chunks;
+
+  renderScreenshot(ssBuffer, width, height);
+  ssSetStatus('ok', `Synthetic test complete — ${width}×${height} Gray4 gradient`);
+  document.getElementById('ss-save').disabled = false;
+}
+
+// ─── screenshot: UI helpers ─────────────────────────────────────────────────
+function ssReset() {
+  ssMeta = null;
+  ssBuffer = null;
+  ssChunksReceived = 0;
+  ssSetStatus('', 'Ready.');
+  ssShowProgress(false);
+  document.getElementById('ss-canvas-wrap').classList.remove('visible');
+  document.getElementById('ss-save').disabled = true;
+}
+
+function ssSetStatus(cls, text) {
+  const el = document.getElementById('ss-status');
+  el.className = cls;
+  el.textContent = text;
+}
+
+function ssShowProgress(visible) {
+  const wrap = document.getElementById('ss-progress-wrap');
+  if (visible) wrap.classList.add('visible');
+  else         wrap.classList.remove('visible');
+  if (!visible) ssSetProgress(0, 1);
+}
+
+function ssSetProgress(received, total) {
+  document.getElementById('ss-progress-bar').style.width = `${(received / total) * 100}%`;
+  document.getElementById('ss-progress-label').textContent = `${received}/${total}`;
+}
+
+// ─── screenshot panel toggle ────────────────────────────────────────────────
+document.getElementById('screenshot-panel-header').addEventListener('click', () => {
+  document.getElementById('screenshot-panel').classList.toggle('collapsed');
+});
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function el(tag, cls) {
