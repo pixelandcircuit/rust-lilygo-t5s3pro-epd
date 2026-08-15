@@ -571,6 +571,10 @@ async fn main(spawner: Spawner) -> ! {
 
         if uptime == 0 || uptime - last_draw >= 30 {
             last_draw = uptime;
+            // Pass 1: drive all pixels to white so old QR/text doesn't ghost.
+            display.fill(0xF).unwrap();
+            display.flush(DrawMode::WhiteOnBlack).unwrap();
+            // Pass 2: render new content.
             render_status(&mut display, state);
             display.flush(DrawMode::BlackOnWhite).unwrap();
             refreshes += 1;
@@ -617,4 +621,57 @@ fn render_status(display: &mut Display, state: &'static SharedState) {
     let up = format!("uptime: {}s", uptime);
     Text::with_alignment(&up, Point::new(480, 120), style, Alignment::Center)
         .draw(display).unwrap();
+
+    if connected {
+        let qr_url = format!("http://{}.{}.{}.{}:{}/", ip_a, ip_b, ip_c, ip_d, PORT);
+        render_qr(display, &qr_url);
+    }
+}
+
+fn render_qr(display: &mut Display, url: &str) {
+    use embedded_graphics::{
+        geometry::{Point, Size},
+        pixelcolor::{Gray4, GrayColor},
+        primitives::{Primitive, PrimitiveStyle, Rectangle},
+        Drawable,
+    };
+    use qrcode_core::{
+        bits::encode_auto,
+        canvas::Canvas,
+        ec::construct_codewords,
+        types::{Color, EcLevel},
+    };
+
+    let ec = EcLevel::M;
+    let Ok(bits) = encode_auto(url.as_bytes(), ec) else { return };
+    let version = bits.version();
+    let Ok((data_cw, ec_cw)) = construct_codewords(&bits.into_bytes(), version, ec) else { return };
+
+    let mut canvas = Canvas::new(version, ec);
+    canvas.draw_all_functional_patterns();
+    canvas.draw_data(&data_cw, &ec_cw);
+    let canvas = canvas.apply_best_mask();
+    let colors = canvas.into_colors();
+
+    let width  = version.width() as i32;
+    let quiet  = 4i32;
+    let scale  = 8i32;
+    let total  = (width + quiet * 2) * scale;
+    let x0     = (960 - total) / 2;
+    let y0     = 160i32;
+    let dark   = PrimitiveStyle::with_fill(Gray4::BLACK);
+
+    for row in 0..width {
+        for col in 0..width {
+            if colors[(row * width + col) as usize] == Color::Dark {
+                Rectangle::new(
+                    Point::new(x0 + (col + quiet) * scale, y0 + (row + quiet) * scale),
+                    Size::new(scale as u32, scale as u32),
+                )
+                .into_styled(dark)
+                .draw(display)
+                .ok();
+            }
+        }
+    }
 }

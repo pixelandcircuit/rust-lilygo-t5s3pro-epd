@@ -1,3 +1,28 @@
+## 2026-08-15 15:00
+
+**Updated: `inspect_demo` — two-pass erase before each screen refresh**
+
+- Added `WhiteOnBlack` erase pass before each 30-second render cycle so
+  previously-dark pixels (old QR modules, text) are actively driven to white
+  before the new frame is drawn. Without this the QR code ghosted on top of
+  the previous display state.
+- Pattern: `fill(0xF)` + `flush(WhiteOnBlack)` → `render_status()` + `flush(BlackOnWhite)`.
+
+---
+
+## 2026-08-15 14:00
+
+**Updated: `inspect_demo` — QR code for the debug URL on the e-paper display**
+
+- Added `render_qr(display, url)` using `qrcode-core 2.0` (no_std + alloc, zero dependencies).
+- When connected, the display shows a scannable QR code centered below the status text,
+  pointing at `http://<device-ip>:3000/`. Scale 8 px/module with 4-module quiet zone.
+- Added `qrcode-core = { version = "2", optional = true }` to Cargo.toml, gated under
+  the existing `debug-inspect` feature — no cost when the feature is disabled.
+- Build: `cargo run --example inspect_demo --features debug-inspect`
+
+---
+
 ## 2026-08-15 13:00
 
 **Updated: `inspect_demo` — enforce debug infrastructure isolation rules**

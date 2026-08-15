@@ -35,6 +35,7 @@ static_cell            = "2.1.0"
 embedded-inspect       = { path = "../embedded-inspect/embedded-inspect", optional = true }
 embedded-websocket     = { version = "0.9", default-features = false, optional = true }
 httparse               = { version = "1",   default-features = false, optional = true }
+qrcode-core            = { version = "2",   optional = true }
 
 [features]
 sim           = ["iris-ui/std", "dep:embedded-graphics-simulator"]
@@ -43,6 +44,7 @@ debug-inspect = [
     "dep:embedded-inspect",
     "dep:embedded-websocket",
     "dep:httparse",
+    "dep:qrcode-core",
     "embassy-net/tcp",
 ]
 
