@@ -33,7 +33,8 @@ use static_cell::StaticCell;
 
 use embedded_inspect::{
     debug_commands, CommandArg, CommandDef, CommandOutput, CommandParamKind, CommandReturnKind,
-    DebugCommands, DebugInspect, DebugValue, Inspect, TypeSchema, ValueKind,
+    DebugCommands, DebugInspect, DebugSetValue, DebugValue, Inspect, SetValueResult, TypeSchema,
+    ValueKind,
 };
 use embedded_websocket::{
     WebSocketCloseStatusCode, WebSocketReceiveMessageType, WebSocketSendMessageType,
@@ -104,6 +105,9 @@ struct ContentState {
     touch_x: u16,
     #[inspect(read_only)]
     touch_y: u16,
+    /// Writable: browser can set display brightness (0–100).
+    #[inspect(write, min = 0, max = 100)]
+    brightness: u8,
 }
 
 #[derive(DebugInspect, Default, Clone)]
@@ -213,6 +217,21 @@ type CmdChannel = Channel<CriticalSectionRawMutex, CommandRequest, 4>;
 static CMD_CHANNEL: CmdChannel = CmdChannel::new();
 static CMD_RESP: Signal<CriticalSectionRawMutex, CommandResponse> = Signal::new();
 
+// ── Remote set-value dispatch ─────────────────────────────────────────────────
+//
+// Same pattern as CMD_CHANNEL/CMD_RESP: debug task enqueues a SetValueRequest,
+// main task drains and applies it via DebugSetValue, signals result back.
+
+struct SetValueRequest {
+    request_id: u32,
+    path: String,
+    value: CommandArg,
+}
+
+type SetChannel = Channel<CriticalSectionRawMutex, SetValueRequest, 4>;
+static SET_CHANNEL: SetChannel = SetChannel::new();
+static SET_RESP: Signal<CriticalSectionRawMutex, (u32, SetValueResult)> = Signal::new();
+
 #[debug_commands]
 impl AppState {
     #[debug_command]
@@ -259,6 +278,8 @@ enum SchemaNode {
 struct FieldNode {
     name: String,
     read_only: bool,
+    min_val: Option<f64>,
+    max_val: Option<f64>,
     schema: SchemaNode,
 }
 
@@ -290,6 +311,8 @@ fn build_schema(inspect: &dyn Inspect) -> SchemaNode {
                     FieldNode {
                         name: f.name.into(),
                         read_only: f.read_only,
+                        min_val: f.min_val,
+                        max_val: f.max_val,
                         schema,
                     }
                 })
@@ -312,10 +335,20 @@ fn schema_to_json(node: &SchemaNode) -> String {
             let field_jsons: Vec<String> = fields
                 .iter()
                 .map(|f| {
+                    let min_json = match f.min_val {
+                        Some(v) => format!(",\"min_val\":{}", v),
+                        None => String::new(),
+                    };
+                    let max_json = match f.max_val {
+                        Some(v) => format!(",\"max_val\":{}", v),
+                        None => String::new(),
+                    };
                     format!(
-                        r#"{{"name":"{}","read_only":{},"schema":{}}}"#,
+                        r#"{{"name":"{}","read_only":{}{}{},"schema":{}}}"#,
                         f.name,
                         f.read_only,
+                        min_json,
+                        max_json,
                         schema_to_json(&f.schema)
                     )
                 })
@@ -429,6 +462,27 @@ fn json_raw_array_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+fn json_raw_object_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{}\":{{", key);
+    let start = json.find(needle.as_str())? + needle.len() - 1;
+    let rest = &json[start..];
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for (i, c) in rest.char_indices() {
+        if escape { escape = false; continue; }
+        if c == '\\' && in_str { escape = true; continue; }
+        if c == '"' { in_str = !in_str; continue; }
+        if in_str { continue; }
+        if c == '{' { depth += 1; }
+        else if c == '}' {
+            depth -= 1;
+            if depth == 0 { return Some(&rest[..=i]); }
+        }
+    }
+    None
+}
+
 fn json_u32_field(json: &str, key: &str) -> Option<u32> {
     let needle = format!("\"{}\":", key);
     let rest = &json[json.find(needle.as_str())? + needle.len()..];
@@ -448,6 +502,7 @@ enum InMsg<'a> {
     TriggerLog { request_id: u32 },
     GetCommands { request_id: u32 },
     InvokeCommand { request_id: u32, name: &'a str, args_json: &'a str },
+    SetValue { request_id: u32, path: &'a str, value_json: &'a str },
     Unknown,
 }
 
@@ -467,6 +522,11 @@ fn parse_msg(json: &str) -> InMsg<'_> {
             request_id,
             name: json_str_field(json, "name").unwrap_or(""),
             args_json: json_raw_array_field(json, "args").unwrap_or("[]"),
+        },
+        Some("SetValue") => InMsg::SetValue {
+            request_id,
+            path: json_str_field(json, "path").unwrap_or(""),
+            value_json: json_raw_object_field(json, "value").unwrap_or("{}"),
         },
         _ => InMsg::Unknown,
     }
@@ -634,6 +694,40 @@ fn command_result_json(rid: u32, output: &CommandOutput, duration_ms: u32) -> St
         r#"{{"type":"CommandResult","request_id":{},"output":{},"duration_ms":{}}}"#,
         rid, output_json, duration_ms
     )
+}
+
+fn set_value_ack(rid: u32, path: &str) -> String {
+    format!(
+        r#"{{"type":"SetValueAck","request_id":{},"path":"{}"}}"#,
+        rid, path
+    )
+}
+
+fn set_value_error(rid: u32, code: &str, path: &str) -> String {
+    format!(
+        r#"{{"type":"Error","request_id":{},"code":"{}","message":"{}"}}"#,
+        rid, code, path
+    )
+}
+
+fn parse_set_value(value_json: &str) -> Option<CommandArg> {
+    let kind = json_str_field(value_json, "kind")?;
+    match kind {
+        "bool" => Some(CommandArg::Bool(json_bool_field(value_json, "value"))),
+        "u8" => json_u32_field(value_json, "value").map(|v| CommandArg::U8(v as u8)),
+        "u16" => json_u32_field(value_json, "value").map(|v| CommandArg::U16(v as u16)),
+        "u32" => json_u32_field(value_json, "value").map(CommandArg::U32),
+        "u64" => json_u32_field(value_json, "value").map(|v| CommandArg::U64(v as u64)),
+        "i8" => json_u32_field(value_json, "value").map(|v| CommandArg::I8(v as i8)),
+        "i16" => json_u32_field(value_json, "value").map(|v| CommandArg::I16(v as i16)),
+        "i32" => json_u32_field(value_json, "value").map(|v| CommandArg::I32(v as i32)),
+        "i64" => json_u32_field(value_json, "value").map(|v| CommandArg::I64(v as i64)),
+        "f32" => json_u32_field(value_json, "value").map(|v| CommandArg::F32(v as f32)),
+        "f64" => json_u32_field(value_json, "value").map(|v| CommandArg::F64(v as f64)),
+        "str" | "string" => json_str_field(value_json, "value").map(|s| CommandArg::Str(s.into())),
+        "enum" => json_str_field(value_json, "value").map(|s| CommandArg::Enum(s.into())),
+        _ => None,
+    }
 }
 
 fn find_matching_brace(s: &str) -> usize {
@@ -1099,6 +1193,49 @@ async fn run_ws_session(
                                         }
                                         break 'inner;
                                     }
+                                    InMsg::SetValue { request_id, path, value_json } => {
+                                        ilog!(
+                                            LogLevel::Debug,
+                                            "inspect",
+                                            "SetValue '{}' request_id={}",
+                                            path,
+                                            request_id
+                                        );
+                                        let reply = match parse_set_value(value_json) {
+                                            None => set_value_error(request_id, "MalformedRequest", path),
+                                            Some(value) => {
+                                                SET_CHANNEL.send(SetValueRequest {
+                                                    request_id,
+                                                    path: path.into(),
+                                                    value,
+                                                }).await;
+                                                match with_timeout(
+                                                    Duration::from_secs(5),
+                                                    SET_RESP.wait(),
+                                                ).await {
+                                                    Ok((_, SetValueResult::Ok)) => set_value_ack(request_id, path),
+                                                    Ok((_, SetValueResult::ReadOnly)) => set_value_error(request_id, "ReadOnly", path),
+                                                    Ok((_, SetValueResult::TypeMismatch)) => set_value_error(request_id, "TypeMismatch", path),
+                                                    Ok((_, SetValueResult::OutOfBounds)) => set_value_error(request_id, "OutOfBounds", path),
+                                                    Ok((_, SetValueResult::UnknownField)) => set_value_error(request_id, "UnknownPath", path),
+                                                    Ok((_, SetValueResult::UnknownVariant)) => set_value_error(request_id, "UnknownVariant", path),
+                                                    Err(_) => set_value_error(request_id, "Timeout", path),
+                                                }
+                                            }
+                                        };
+                                        let n = ws
+                                            .write(
+                                                WebSocketSendMessageType::Text,
+                                                true,
+                                                reply.as_bytes(),
+                                                &mut tx_buf,
+                                            )
+                                            .unwrap_or(0);
+                                        if write_all(sock, &tx_buf[..n]).await.is_err() {
+                                            break 'outer;
+                                        }
+                                        break 'inner;
+                                    }
                                     _ => {
                                         let reply = handle_msg(json, state, &schema_json);
                                         let n = ws
@@ -1188,7 +1325,7 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
         InMsg::GetCommands { request_id } => {
             commands_response_json(request_id, AppState::command_defs())
         }
-        InMsg::GetScreenshot { .. } | InMsg::InvokeCommand { .. } | InMsg::Unknown => {
+        InMsg::GetScreenshot { .. } | InMsg::InvokeCommand { .. } | InMsg::SetValue { .. } | InMsg::Unknown => {
             error_resp(0, "UnknownMessage", "unrecognised message type")
         }
     }
@@ -1321,6 +1458,14 @@ async fn main(spawner: Spawner) -> ! {
                 output,
                 duration_ms,
             });
+        }
+
+        // Drain set-value channel — apply writable field mutations via DebugSetValue.
+        while let Ok(req) = SET_CHANNEL.try_receive() {
+            let result = state.lock(|cell| {
+                cell.borrow_mut().set_field(&req.path, req.value)
+            });
+            SET_RESP.signal((req.request_id, result));
         }
 
         Timer::after(Duration::from_secs(1)).await;

@@ -130,6 +130,43 @@ main { flex: 1; padding: 20px 24px 80px }
 .ro   { color: var(--muted); border-color: var(--border); background: var(--surface) }
 .enum { color: #7ee787; border-color: #2d4a2d; background: #0d2210 }
 
+/* ── write controls ─────────────────────────────────────────── */
+.field-write {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+}
+.field-write input[type="number"],
+.field-write input[type="text"],
+.field-write select {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  width: 90px;
+}
+.field-write input[type="checkbox"] { cursor: pointer }
+.field-write input:focus, .field-write select:focus { border-color: var(--accent); outline: none }
+.field-write .set-btn {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.field-write .set-btn:hover:not(:disabled) { border-color: var(--accent) }
+.field-write .set-btn:disabled { opacity: .4; cursor: not-allowed }
+.set-status { font-size: 11px; min-width: 2ch }
+.set-status.ok  { color: var(--green) }
+.set-status.err { color: var(--red) }
+
 /* ── event log ───────────────────────────────────────────────── */
 #events {
   position: fixed;
@@ -767,7 +804,7 @@ async function fetchValue(path) {
 // ─── schema rendering ───────────────────────────────────────────────────────
 function renderNode(schema, path) {
   if (schema.kind === 'Struct') return renderStruct(schema, path);
-  return renderLeaf(schema, path.split('.').pop() ?? path, path, false);
+  return renderLeaf(schema, path.split('.').pop() ?? path, path, { read_only: true });
 }
 
 function renderStruct(schema, path) {
@@ -791,14 +828,19 @@ function renderStruct(schema, path) {
     children.appendChild(
       f.schema.kind === 'Struct'
         ? renderStruct(f.schema, fp)
-        : renderLeaf(f.schema, f.name, fp, f.read_only)
+        : renderLeaf(f.schema, f.name, fp, f)
     );
   }
   wrap.appendChild(children);
   return wrap;
 }
 
-function renderLeaf(schema, name, path, readOnly) {
+function renderLeaf(schema, name, path, fieldMeta) {
+  // fieldMeta is either a field object {read_only, min_val, max_val} or a legacy bool
+  const readOnly = (typeof fieldMeta === 'boolean') ? fieldMeta : (fieldMeta?.read_only ?? true);
+  const minVal   = fieldMeta?.min_val ?? null;
+  const maxVal   = fieldMeta?.max_val ?? null;
+
   const row = el('div', 'field-row');
   row.dataset.path = path;
 
@@ -819,6 +861,64 @@ function renderLeaf(schema, name, path, readOnly) {
   }
   if (schema.kind === 'Enum') {
     const b = el('span', 'badge enum'); b.textContent = schema.type_name; row.appendChild(b);
+  }
+
+  if (!readOnly) {
+    // Build write control based on schema kind
+    const wrap = el('div', 'field-write');
+    let input;
+    const kind = schema.kind === 'Primitive' ? schema.primitive : schema.kind.toLowerCase();
+
+    if (kind === 'bool') {
+      input = el('input'); input.type = 'checkbox'; input.dataset.kind = 'bool';
+    } else if (['u8','u16','u32','u64','u128','i8','i16','i32','i64','i128','f32','f64'].includes(kind)) {
+      input = el('input'); input.type = 'number'; input.value = '0'; input.dataset.kind = kind;
+      if (minVal !== null) input.min = minVal;
+      if (maxVal !== null) input.max = maxVal;
+    } else if (kind === 'str' || kind === 'string') {
+      input = el('input'); input.type = 'text'; input.dataset.kind = 'str';
+    } else if (schema.kind === 'Enum') {
+      input = el('select'); input.dataset.kind = 'enum';
+      for (const v of schema.variants ?? []) {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v; input.appendChild(opt);
+      }
+    } else {
+      input = el('input'); input.type = 'text'; input.dataset.kind = 'str';
+    }
+    input.dataset.fieldPath = path;
+
+    const btn = el('button', 'set-btn'); btn.textContent = 'Set';
+    const status = el('span', 'set-status');
+    wrap.append(input, btn, status);
+    row.appendChild(wrap);
+
+    btn.addEventListener('click', async () => {
+      const k = input.dataset.kind;
+      let value;
+      if (k === 'bool')  value = { kind: 'bool', value: input.checked };
+      else if (k === 'enum') value = { kind: 'enum', value: input.value };
+      else if (k === 'str')  value = { kind: 'str', value: input.value };
+      else                   value = { kind: k, value: Number(input.value) };
+
+      btn.disabled = true;
+      status.className = 'set-status';
+      status.textContent = '…';
+      try {
+        const resp = await request({ type: 'SetValue', request_id: nextId++, path, value });
+        if (resp.type === 'SetValueAck') {
+          status.className = 'set-status ok'; status.textContent = '✓';
+        } else {
+          status.className = 'set-status err';
+          status.textContent = `✗ ${resp.code ?? resp.type}`;
+        }
+      } catch (e) {
+        status.className = 'set-status err'; status.textContent = '✗';
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { status.className = 'set-status'; status.textContent = ''; }, 3000);
+      }
+    });
   }
 
   return row;

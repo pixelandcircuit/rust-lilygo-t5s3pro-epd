@@ -1,3 +1,19 @@
+## 2026-08-15 22:00
+
+**Milestone 11: explicitly writable inspected properties (ESP32 firmware + browser UI)**
+
+- `inspect_demo.rs`: added `SetValueRequest` struct; `SET_CHANNEL: Channel<CriticalSectionRawMutex, SetValueRequest, 4>` and `SET_RESP: Signal<CriticalSectionRawMutex, (u32, SetValueResult)>` globals; imported `DebugSetValue`, `SetValueResult`.
+- `ContentState`: added `brightness: u8` with `#[inspect(write, min = 0, max = 100)]` as a live example of a writable field with bounds.
+- `FieldNode`: extended with `min_val: Option<f64>` and `max_val: Option<f64>`; threaded through `build_schema` and `schema_to_json` so bounds are serialised to the browser.
+- `parse_msg`: added `SetValue` arm parsing `{type, request_id, path, value}` where `value` is a JSON object `{kind, value}`.
+- `run_ws_session`: added `InvokeCommand`-style async branch for `SetValue` — sends `SetValueRequest` to `SET_CHANNEL`, awaits `SET_RESP` with 5 s timeout, maps `SetValueResult` to `SetValueAck` or `Error` JSON.
+- `handle_msg`: `SetValue` excluded from sync handler (handled as async branch, same as `InvokeCommand`).
+- Main loop: added `SET_CHANNEL.try_receive()` drain — calls `state.set_field(path, value)` via `DebugSetValue`, signals `SET_RESP` with result.
+- JSON helpers added: `set_value_ack`, `set_value_error`, `parse_set_value`, `json_raw_object_field`.
+- `inspect_index.html`: write controls rendered inline in each non-read-only `field-row`. Checkbox for bool, number input (with min/max when bounds present) for numerics, text for strings, select for enums. Set button sends `SetValue`; shows `✓` on ack or `✗ code` on error. Added CSS for `.field-write`, `.set-btn`, `.set-status`.
+
+---
+
 ## 2026-08-15 20:00
 
 **Milestone 10: remotely invokable debug commands (ESP32 firmware + browser UI)**
