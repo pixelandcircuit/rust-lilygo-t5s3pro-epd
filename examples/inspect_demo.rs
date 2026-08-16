@@ -21,6 +21,7 @@ use embassy_net::{tcp::TcpSocket, Runner, Stack, StackResources};
 use embassy_sync::{
     blocking_mutex::{raw::CriticalSectionRawMutex, Mutex},
     channel::Channel,
+    signal::Signal,
 };
 use embassy_time::{with_timeout, Duration, Instant, Timer};
 use esp_backtrace as _;
@@ -30,7 +31,10 @@ use esp_hal::{
 use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
 use static_cell::StaticCell;
 
-use embedded_inspect::{DebugInspect, DebugValue, Inspect, TypeSchema, ValueKind};
+use embedded_inspect::{
+    debug_commands, CommandArg, CommandDef, CommandOutput, CommandParamKind, CommandReturnKind,
+    DebugCommands, DebugInspect, DebugValue, Inspect, TypeSchema, ValueKind,
+};
 use embedded_websocket::{
     WebSocketCloseStatusCode, WebSocketReceiveMessageType, WebSocketSendMessageType,
     WebSocketServer,
@@ -184,6 +188,42 @@ macro_rules! ilog {
             DROPPED_COUNT.fetch_add(1, Ordering::Relaxed);
         }
     }};
+}
+
+// ── Remote command dispatch ────────────────────────────────────────────────────
+//
+// The debug task sends CommandRequest to CMD_CHANNEL and then awaits CMD_RESP.
+// The main task drains CMD_CHANNEL each render iteration, dispatches to AppState,
+// and signals CMD_RESP with the result.  This keeps mutable AppState ownership
+// entirely in main — the debug task never touches it directly.
+
+struct CommandRequest {
+    request_id: u32,
+    name: String,
+    args: Vec<CommandArg>,
+}
+
+struct CommandResponse {
+    request_id: u32,
+    output: CommandOutput,
+    duration_ms: u32,
+}
+
+type CmdChannel = Channel<CriticalSectionRawMutex, CommandRequest, 4>;
+static CMD_CHANNEL: CmdChannel = CmdChannel::new();
+static CMD_RESP: Signal<CriticalSectionRawMutex, CommandResponse> = Signal::new();
+
+#[debug_commands]
+impl AppState {
+    #[debug_command]
+    fn reset_refresh_count(&mut self) {
+        self.display.refresh_count = 0;
+    }
+
+    #[debug_command]
+    fn set_content_page(&mut self, page: u32) {
+        self.content.current_page = page;
+    }
 }
 
 // ── I/O helper ────────────────────────────────────────────────────────────────
@@ -358,6 +398,37 @@ fn json_str_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     Some(&json[start..start + len])
 }
 
+fn json_bool_field(json: &str, key: &str) -> bool {
+    let needle = format!("\"{}\":", key);
+    let rest = match json.find(needle.as_str()) {
+        Some(p) => &json[p + needle.len()..],
+        None => return false,
+    };
+    let rest = rest.trim_start();
+    rest.starts_with("true")
+}
+
+fn json_raw_array_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let needle = format!("\"{}\":[", key);
+    let start = json.find(needle.as_str())? + needle.len() - 1;
+    let rest = &json[start..];
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for (i, c) in rest.char_indices() {
+        if escape { escape = false; continue; }
+        if c == '\\' && in_str { escape = true; continue; }
+        if c == '"' { in_str = !in_str; continue; }
+        if in_str { continue; }
+        if c == '[' { depth += 1; }
+        else if c == ']' {
+            depth -= 1;
+            if depth == 0 { return Some(&rest[..=i]); }
+        }
+    }
+    None
+}
+
 fn json_u32_field(json: &str, key: &str) -> Option<u32> {
     let needle = format!("\"{}\":", key);
     let rest = &json[json.find(needle.as_str())? + needle.len()..];
@@ -375,6 +446,8 @@ enum InMsg<'a> {
     GetValue { request_id: u32, path: &'a str },
     GetScreenshot { request_id: u32 },
     TriggerLog { request_id: u32 },
+    GetCommands { request_id: u32 },
+    InvokeCommand { request_id: u32, name: &'a str, args_json: &'a str },
     Unknown,
 }
 
@@ -389,6 +462,12 @@ fn parse_msg(json: &str) -> InMsg<'_> {
         },
         Some("GetScreenshot") => InMsg::GetScreenshot { request_id },
         Some("TriggerLog") => InMsg::TriggerLog { request_id },
+        Some("GetCommands") => InMsg::GetCommands { request_id },
+        Some("InvokeCommand") => InMsg::InvokeCommand {
+            request_id,
+            name: json_str_field(json, "name").unwrap_or(""),
+            args_json: json_raw_array_field(json, "args").unwrap_or("[]"),
+        },
         _ => InMsg::Unknown,
     }
 }
@@ -491,6 +570,123 @@ fn log_entry_json(entry: &LogEntry, dropped_before: u32) -> String {
         json_escape(&entry.message),
         dropped_before,
     )
+}
+
+// ── Command JSON helpers ───────────────────────────────────────────────────────
+
+fn command_param_kind_json(kind: &CommandParamKind) -> String {
+    match kind {
+        CommandParamKind::Bool => r#"{"type":"bool"}"#.into(),
+        CommandParamKind::U8 => r#"{"type":"u8"}"#.into(),
+        CommandParamKind::U16 => r#"{"type":"u16"}"#.into(),
+        CommandParamKind::U32 => r#"{"type":"u32"}"#.into(),
+        CommandParamKind::U64 => r#"{"type":"u64"}"#.into(),
+        CommandParamKind::U128 => r#"{"type":"u128"}"#.into(),
+        CommandParamKind::I8 => r#"{"type":"i8"}"#.into(),
+        CommandParamKind::I16 => r#"{"type":"i16"}"#.into(),
+        CommandParamKind::I32 => r#"{"type":"i32"}"#.into(),
+        CommandParamKind::I64 => r#"{"type":"i64"}"#.into(),
+        CommandParamKind::I128 => r#"{"type":"i128"}"#.into(),
+        CommandParamKind::F32 => r#"{"type":"f32"}"#.into(),
+        CommandParamKind::F64 => r#"{"type":"f64"}"#.into(),
+        CommandParamKind::Str => r#"{"type":"str"}"#.into(),
+        CommandParamKind::Enum { type_name, variants } => {
+            let vs: Vec<String> = variants.iter().map(|v| format!("\"{}\"", v)).collect();
+            format!(
+                r#"{{"type":"enum","type_name":"{}","variants":[{}]}}"#,
+                type_name,
+                vs.join(",")
+            )
+        }
+    }
+}
+
+fn commands_response_json(rid: u32, defs: &[CommandDef]) -> String {
+    let cmds: Vec<String> = defs.iter().map(|d| {
+        let params: Vec<String> = d.params.iter().map(|p| {
+            format!(r#"{{"name":"{}","kind":{}}}"#, p.name, command_param_kind_json(&p.kind))
+        }).collect();
+        let rk = match d.return_kind {
+            CommandReturnKind::Unit => "unit",
+            CommandReturnKind::Result => "result",
+        };
+        let desc = match d.description {
+            Some(s) => format!("\"{}\"", s),
+            None => "null".into(),
+        };
+        format!(
+            r#"{{"name":"{}","description":{},"params":[{}],"return_kind":"{}"}}"#,
+            d.name, desc, params.join(","), rk
+        )
+    }).collect();
+    format!(
+        r#"{{"type":"CommandsResponse","request_id":{},"commands":[{}]}}"#,
+        rid, cmds.join(",")
+    )
+}
+
+fn command_result_json(rid: u32, output: &CommandOutput, duration_ms: u32) -> String {
+    let output_json = match output {
+        CommandOutput::Unit => r#"{"ok":true}"#.into(),
+        CommandOutput::Error(msg) => format!(r#"{{"ok":false,"error":"{}"}}"#, json_escape(msg)),
+    };
+    format!(
+        r#"{{"type":"CommandResult","request_id":{},"output":{},"duration_ms":{}}}"#,
+        rid, output_json, duration_ms
+    )
+}
+
+fn find_matching_brace(s: &str) -> usize {
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for (i, c) in s.char_indices() {
+        if escape { escape = false; continue; }
+        if c == '\\' && in_str { escape = true; continue; }
+        if c == '"' { in_str = !in_str; continue; }
+        if in_str { continue; }
+        if c == '{' { depth += 1; }
+        else if c == '}' {
+            depth -= 1;
+            if depth == 0 { return i; }
+        }
+    }
+    s.len().saturating_sub(1)
+}
+
+fn parse_command_args(args_json: &str) -> Vec<CommandArg> {
+    // args_json: [{"kind":"u32","value":42},{"kind":"bool","value":true},...]
+    let mut result = Vec::new();
+    let mut rest = args_json.trim();
+    if !rest.starts_with('[') { return result; }
+    rest = &rest[1..];
+    loop {
+        rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
+        if rest.is_empty() || rest.starts_with(']') { break; }
+        if !rest.starts_with('{') { break; }
+        let end = find_matching_brace(rest);
+        let obj = &rest[..=end];
+        rest = &rest[end + 1..];
+        let kind = json_str_field(obj, "kind").unwrap_or("");
+        let arg = match kind {
+            "bool" => Some(CommandArg::Bool(json_bool_field(obj, "value"))),
+            "u8" => json_u32_field(obj, "value").map(|v| CommandArg::U8(v as u8)),
+            "u16" => json_u32_field(obj, "value").map(|v| CommandArg::U16(v as u16)),
+            "u32" => json_u32_field(obj, "value").map(CommandArg::U32),
+            "u64" => json_u32_field(obj, "value").map(|v| CommandArg::U64(v as u64)),
+            "i8" => json_u32_field(obj, "value").map(|v| CommandArg::I8(v as i8)),
+            "i16" => json_u32_field(obj, "value").map(|v| CommandArg::I16(v as i16)),
+            "i32" => json_u32_field(obj, "value").map(|v| CommandArg::I32(v as i32)),
+            "i64" => json_u32_field(obj, "value").map(|v| CommandArg::I64(v as i64)),
+            "f32" => json_u32_field(obj, "value").map(|v| CommandArg::F32(v as f32)),
+            "f64" => json_u32_field(obj, "value").map(|v| CommandArg::F64(v as f64)),
+            "str" | "string" => json_str_field(obj, "value").map(|s| CommandArg::Str(s.into())),
+            "enum" => json_str_field(obj, "value").map(|s| CommandArg::Enum(s.into())),
+            _ => None,
+        };
+        if let Some(a) = arg { result.push(a); }
+    }
+    result
 }
 
 // Copies the current framebuffer to a PSRAM snapshot outside any lock (~3 ms at
@@ -861,6 +1057,48 @@ async fn run_ws_session(
                                         // After async work, break to outer loop to re-poll TCP.
                                         break 'inner;
                                     }
+                                    InMsg::InvokeCommand { request_id, name, args_json } => {
+                                        ilog!(
+                                            LogLevel::Debug,
+                                            "inspect",
+                                            "InvokeCommand '{}' request_id={}",
+                                            name,
+                                            request_id
+                                        );
+                                        let args = parse_command_args(args_json);
+                                        CMD_CHANNEL.send(CommandRequest {
+                                            request_id,
+                                            name: name.into(),
+                                            args,
+                                        }).await;
+                                        let reply = match with_timeout(
+                                            Duration::from_secs(5),
+                                            CMD_RESP.wait(),
+                                        ).await {
+                                            Ok(resp) => command_result_json(
+                                                resp.request_id,
+                                                &resp.output,
+                                                resp.duration_ms,
+                                            ),
+                                            Err(_) => command_result_json(
+                                                request_id,
+                                                &CommandOutput::Error("timeout: device busy".into()),
+                                                0,
+                                            ),
+                                        };
+                                        let n = ws
+                                            .write(
+                                                WebSocketSendMessageType::Text,
+                                                true,
+                                                reply.as_bytes(),
+                                                &mut tx_buf,
+                                            )
+                                            .unwrap_or(0);
+                                        if write_all(sock, &tx_buf[..n]).await.is_err() {
+                                            break 'outer;
+                                        }
+                                        break 'inner;
+                                    }
                                     _ => {
                                         let reply = handle_msg(json, state, &schema_json);
                                         let n = ws
@@ -947,7 +1185,10 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
             ilog!(LogLevel::Warn, "inspect", "this is a sample warn message");
             format!(r#"{{"type":"TriggerLogAck","request_id":{}}}"#, request_id)
         }
-        InMsg::GetScreenshot { .. } | InMsg::Unknown => {
+        InMsg::GetCommands { request_id } => {
+            commands_response_json(request_id, AppState::command_defs())
+        }
+        InMsg::GetScreenshot { .. } | InMsg::InvokeCommand { .. } | InMsg::Unknown => {
             error_resp(0, "UnknownMessage", "unrecognised message type")
         }
     }
@@ -1064,6 +1305,22 @@ async fn main(spawner: Spawner) -> ! {
             display.flush(DrawMode::BlackOnWhite).unwrap();
             refreshes += 1;
             state.lock(|cell| cell.borrow_mut().display.refresh_count = refreshes);
+        }
+
+        // Drain command channel — dispatch to AppState and signal response.
+        while let Ok(req) = CMD_CHANNEL.try_receive() {
+            let start = Instant::now();
+            let output = state.lock(|cell| {
+                cell.borrow_mut()
+                    .dispatch_command(&req.name, &req.args)
+                    .unwrap_or_else(|e| CommandOutput::Error(format!("{:?}", e)))
+            });
+            let duration_ms = start.elapsed().as_millis() as u32;
+            CMD_RESP.signal(CommandResponse {
+                request_id: req.request_id,
+                output,
+                duration_ms,
+            });
         }
 
         Timer::after(Duration::from_secs(1)).await;

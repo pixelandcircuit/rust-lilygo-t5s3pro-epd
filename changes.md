@@ -1,3 +1,17 @@
+## 2026-08-15 20:00
+
+**Milestone 10: remotely invokable debug commands (ESP32 firmware + browser UI)**
+
+- `inspect_demo.rs`: added `CommandRequest`/`CommandResponse` structs; `CMD_CHANNEL: Channel<CriticalSectionRawMutex, CommandRequest, 4>` and `CMD_RESP: Signal<CriticalSectionRawMutex, CommandResponse>` globals.
+- `#[debug_commands] impl AppState`: exposes `reset_refresh_count()` and `set_content_page(page: u32)` as remotely invokable commands via the `DebugCommands` trait.
+- `handle_msg`: added `GetCommands` arm — returns `commands_response_json` synchronously from the generated static metadata.
+- `run_ws_session`: added `InvokeCommand` as an async branch (mirrors `GetScreenshot` pattern): sends `CommandRequest` to `CMD_CHANNEL`, awaits `CMD_RESP` with 5 s timeout, sends `CommandResult` JSON to browser.
+- Main loop: added `CMD_CHANNEL.try_receive()` drain — dispatches to `AppState::dispatch_command()`, signals `CMD_RESP` with timing. Mutable ownership of `AppState` stays entirely in the main task.
+- JSON helpers added: `commands_response_json`, `command_result_json`, `command_param_kind_json`, `parse_command_args`, `find_matching_brace`.
+- `inspect_index.html`: added Commands panel with dynamically generated per-command cards. On connect, `GetCommands` is sent; `renderCommands()` builds input controls (checkbox / number / text / select) for each param. Run button sends `InvokeCommand` and shows result (`✓ OK (N ms)` or `✗ error message`).
+
+---
+
 ## 2026-08-15 18:00
 
 **"Log test" button in browser Logs panel**

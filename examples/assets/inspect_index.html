@@ -364,6 +364,96 @@ main { flex: 1; padding: 20px 24px 80px }
 .log-row.level-warn  .log-msg  { color: var(--yellow) }
 .log-row.level-error .log-level,
 .log-row.level-error .log-msg  { color: var(--red) }
+
+/* ── commands panel ─────────────────────────────────────── */
+#commands-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+#commands-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+#commands-panel-header:hover { background: #1c2128 }
+#commands-panel-header .chevron { color: var(--muted) }
+#commands-panel-header .struct-label { color: var(--accent) }
+#commands-panel.collapsed #commands-panel-body { display: none }
+#commands-panel.collapsed #commands-panel-header .chevron::before { content: '▸' }
+#commands-panel-header .chevron::before { content: '▾' }
+
+#commands-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px;
+}
+.cmd-card {
+  background: #161b22;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  min-width: 200px;
+  flex: 1 1 200px;
+  max-width: 380px;
+}
+.cmd-name {
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+.cmd-params {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.cmd-params label {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cmd-params input[type="number"],
+.cmd-params input[type="text"],
+.cmd-params select {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+  width: 110px;
+}
+.cmd-params input:focus, .cmd-params select:focus { border-color: var(--accent) }
+.cmd-footer { display: flex; align-items: center; gap: 10px }
+.cmd-run-btn {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.cmd-run-btn:hover { background: #30363d; border-color: var(--accent); color: #fff }
+.cmd-run-btn:disabled { opacity: 0.5; cursor: default }
+.cmd-status { font-size: 12px }
+.cmd-status.ok  { color: var(--green) }
+.cmd-status.err { color: var(--red) }
+.cmd-status.pending { color: var(--muted) }
 </style>
 </head>
 <body>
@@ -425,6 +515,18 @@ main { flex: 1; padding: 20px 24px 80px }
     </div>
     <div id="logs-panel-body">
       <div id="log-list"></div>
+    </div>
+  </section>
+
+  <!-- ── commands panel ─────────────────────────────────────── -->
+  <section id="commands-panel" class="collapsed">
+    <div id="commands-panel-header">
+      <span class="chevron"></span>
+      <span class="struct-label">Commands</span>
+      <span id="commands-count" class="type-tag">0 commands</span>
+    </div>
+    <div id="commands-panel-body">
+      <div id="commands-list"></div>
     </div>
   </section>
 </main>
@@ -527,16 +629,134 @@ function dispatch(msg) {
 
 // ─── schema discovery ───────────────────────────────────────────────────────
 async function discoverAndRender() {
-  const resp = await request({ type:'GetSchema', request_id: nextId++ });
-  if (resp.type !== 'SchemaResponse') return;
+  const [schemaResp] = await Promise.all([
+    request({ type:'GetSchema', request_id: nextId++ }),
+    getAndRenderCommands(),
+  ]);
+  if (schemaResp.type !== 'SchemaResponse') return;
 
   const root = document.getElementById('tree');
   root.innerHTML = '';
-  root.appendChild(renderNode(resp.schema, ''));
+  root.appendChild(renderNode(schemaResp.schema, ''));
 
   // Fetch initial values for all leaf paths concurrently.
-  const leaves = collectLeaves(resp.schema, '');
+  const leaves = collectLeaves(schemaResp.schema, '');
   await Promise.all(leaves.map(fetchValue));
+}
+
+async function getAndRenderCommands() {
+  const resp = await request({ type:'GetCommands', request_id: nextId++ });
+  if (resp.type !== 'CommandsResponse') return;
+  renderCommands(resp.commands);
+}
+
+function renderCommands(commands) {
+  const list = document.getElementById('commands-list');
+  list.innerHTML = '';
+  const count = document.getElementById('commands-count');
+  count.textContent = `${commands.length} command${commands.length === 1 ? '' : 's'}`;
+
+  if (commands.length > 0) {
+    document.getElementById('commands-panel').classList.remove('collapsed');
+  }
+
+  for (const cmd of commands) {
+    const card = el('div', 'cmd-card');
+    card.dataset.name = cmd.name;
+
+    const nameEl = el('div', 'cmd-name');
+    nameEl.textContent = cmd.name;
+    card.appendChild(nameEl);
+
+    if (cmd.description) {
+      const desc = el('div', 'cmd-desc');
+      desc.textContent = cmd.description;
+      desc.style.cssText = 'font-size:11px;color:var(--muted);margin-bottom:8px';
+      card.appendChild(desc);
+    }
+
+    const paramsEl = el('div', 'cmd-params');
+    for (const param of cmd.params) {
+      const lbl = el('label');
+      lbl.textContent = param.name + ' ';
+
+      let input;
+      const k = param.kind;
+      if (k.type === 'bool') {
+        input = el('input');
+        input.type = 'checkbox';
+        input.dataset.kind = 'bool';
+      } else if (['u8','u16','u32','u64','i8','i16','i32','i64','f32','f64'].includes(k.type)) {
+        input = el('input');
+        input.type = 'number';
+        input.value = '0';
+        input.dataset.kind = k.type;
+      } else if (k.type === 'str') {
+        input = el('input');
+        input.type = 'text';
+        input.dataset.kind = 'str';
+      } else if (k.type === 'enum') {
+        input = el('select');
+        input.dataset.kind = 'enum';
+        for (const v of k.variants) {
+          const opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = v;
+          input.appendChild(opt);
+        }
+      } else {
+        input = el('input');
+        input.type = 'text';
+        input.dataset.kind = k.type;
+      }
+
+      input.dataset.paramName = param.name;
+      lbl.appendChild(input);
+      paramsEl.appendChild(lbl);
+    }
+    card.appendChild(paramsEl);
+
+    const footer = el('div', 'cmd-footer');
+    const runBtn = el('button', 'cmd-run-btn');
+    runBtn.textContent = 'Run';
+    const statusEl = el('span', 'cmd-status');
+    footer.append(runBtn, statusEl);
+    card.appendChild(footer);
+
+    runBtn.addEventListener('click', async () => {
+      const inputs = paramsEl.querySelectorAll('[data-kind]');
+      const args = Array.from(inputs).map(inp => {
+        const kind = inp.dataset.kind;
+        if (kind === 'bool') return { kind: 'bool', value: inp.checked };
+        if (kind === 'enum') return { kind: 'enum', value: inp.value };
+        if (kind === 'str') return { kind: 'str', value: inp.value };
+        return { kind, value: Number(inp.value) };
+      });
+
+      runBtn.disabled = true;
+      statusEl.className = 'cmd-status pending';
+      statusEl.textContent = '…';
+
+      try {
+        const resp = await request({ type:'InvokeCommand', request_id: nextId++, name: cmd.name, args });
+        if (resp.output?.ok === false) {
+          statusEl.className = 'cmd-status err';
+          statusEl.textContent = `✗ ${resp.output.error}`;
+        } else {
+          const dur = resp.duration_ms != null ? ` (${resp.duration_ms} ms)` : '';
+          statusEl.className = 'cmd-status ok';
+          statusEl.textContent = `✓ OK${dur}`;
+        }
+      } catch (e) {
+        statusEl.className = 'cmd-status err';
+        statusEl.textContent = '✗ timeout';
+      } finally {
+        runBtn.disabled = false;
+      }
+    });
+
+    list.appendChild(card);
+  }
 }
 
 async function fetchValue(path) {
@@ -958,6 +1178,11 @@ document.getElementById('logs-panel-header').addEventListener('click', () => {
 // Prevent toolbar clicks from toggling collapse
 document.querySelector('#logs-panel-header .logs-toolbar').addEventListener('click', e => {
   e.stopPropagation();
+});
+
+// ─── commands panel toggle ────────────────────────────────────────────────────
+document.getElementById('commands-panel-header').addEventListener('click', () => {
+  document.getElementById('commands-panel').classList.toggle('collapsed');
 });
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
