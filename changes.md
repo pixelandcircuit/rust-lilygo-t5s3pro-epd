@@ -1,3 +1,16 @@
+## 2026-08-16 14:00
+
+**Milestone 13: network discovery and device identity (ESP32 firmware + browser UI)**
+
+- `inspect_demo.rs`: new `mdns_task` Embassy task that joins `224.0.0.251` multicast group, announces `_embedded-inspect._tcp.local` via hand-rolled DNS packets every 30 s, and responds to A-record and PTR queries.
+- Added `DEVICE_NAME`, `DEVICE_TYPE_STR`, `FIRMWARE_VERSION` constants; `slugify()` and `mdns_hostname_for()` helpers; DNS packet building and parsing functions.
+- Updated `hello_ack()` to include `device_name`, `device_type`, `firmware_version`, and `mdns_hostname` fields matching new `HelloAck` protocol fields.
+- Increased `StackResources` from 4 to 6 slots to accommodate the extra mDNS UDP socket.
+- `Cargo.toml`: added `embassy-net/multicast` feature to `debug-inspect`.
+- `inspect_index.html`: header now shows device name and type from `HelloAck`; added connect bar with IP/hostname input and Connect button; `HelloAck` handler populates `mdns_hostname` into the connect input.
+
+---
+
 ## 2026-08-16 10:00
 
 **Milestone 12: metrics and time-series visualization (ESP32 firmware + browser UI)**

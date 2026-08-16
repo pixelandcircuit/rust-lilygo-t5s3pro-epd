@@ -42,14 +42,40 @@ header {
 }
 h1 { font-size: 15px; color: var(--accent); font-weight: 600; letter-spacing: -.3px }
 h1 span { color: var(--muted); font-weight: 400 }
-
+#device-info { font-size: 12px; color: var(--muted) }
+#device-name { color: var(--text); font-weight: 600 }
+#connect-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+#connect-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 8px;
+  width: 200px;
+}
+#connect-input::placeholder { color: var(--muted) }
+#connect-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+#connect-btn:hover { color: var(--text) }
 #status {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
   color: var(--muted);
-  margin-left: auto;
 }
 .dot {
   width: 8px; height: 8px;
@@ -605,10 +631,18 @@ canvas.metric-canvas {
 </head>
 <body>
 <header>
-  <h1>embedded-inspect <span>demo</span></h1>
-  <div id="status">
-    <span class="dot"></span>
-    <span id="status-text">Connecting…</span>
+  <h1>embedded-inspect</h1>
+  <div id="device-info" style="display:none">
+    <span id="device-name"></span>
+    <span id="device-type" style="margin-left:6px;color:var(--muted)"></span>
+  </div>
+  <div id="connect-bar">
+    <input id="connect-input" type="text" placeholder="hostname or IP (e.g. 192.168.1.42)">
+    <button id="connect-btn" onclick="connectTo()">Connect</button>
+    <div id="status">
+      <span class="dot"></span>
+      <span id="status-text">Connecting…</span>
+    </div>
   </div>
 </header>
 
@@ -738,8 +772,19 @@ let logNeedsRender = false;
 let totalDropped = 0;
 
 // ─── connection ─────────────────────────────────────────────────────────────
+let targetHost = location.host;
+
+function connectTo() {
+  const input = document.getElementById('connect-input').value.trim();
+  if (!input) return;
+  // If no port specified and looks like a bare host, default to port 8080
+  targetHost = input.includes(':') ? input : `${input}:8080`;
+  if (ws) ws.close();
+  connect();
+}
+
 function connect() {
-  const url = `ws://${location.host}/debug`;
+  const url = `ws://${targetHost}/debug`;
   ws = new WebSocket(url);
   ws.binaryType = 'arraybuffer';
 
@@ -778,10 +823,20 @@ function dispatch(msg) {
   }
 
   switch (msg.type) {
-    case 'HelloAck':
-      setStatus('ok', `Connected  ·  protocol v${msg.version}  ·  ${msg.server_name}`);
+    case 'HelloAck': {
+      const devName = msg.device_name || msg.server_name;
+      const devType = msg.device_type || '';
+      setStatus('ok', `Connected  ·  v${msg.version}`);
+      const info = document.getElementById('device-info');
+      document.getElementById('device-name').textContent = devName;
+      document.getElementById('device-type').textContent = devType ? `[${devType}]` : '';
+      info.style.display = devName ? '' : 'none';
+      if (msg.mdns_hostname) {
+        document.getElementById('connect-input').value = msg.mdns_hostname;
+      }
       discoverAndRender();
       break;
+    }
 
     case 'ValueChanged':
       setValue(msg.path, msg.value);

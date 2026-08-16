@@ -17,7 +17,11 @@ use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_executor::Spawner;
-use embassy_net::{tcp::TcpSocket, Runner, Stack, StackResources};
+use embassy_net::{
+    tcp::TcpSocket,
+    udp::{PacketMetadata, UdpSocket},
+    IpAddress, IpEndpoint, Runner, Stack, StackResources,
+};
 use embassy_sync::{
     blocking_mutex::{raw::CriticalSectionRawMutex, Mutex},
     channel::Channel,
@@ -60,6 +64,19 @@ const PASSWORD: &str = match option_env!("WIFI_PASS") {
     None => "PASSWORD",
 };
 const PORT: u16 = 3000;
+
+// ── Device identity ───────────────────────────────────────────────────────────
+//
+// Set DEVICE_NAME at build time: `DEVICE_NAME="T5 Reader" cargo run ...`
+// The name appears in HelloAck, in the mDNS service instance, and in the
+// browser header. FIRMWARE_VERSION is taken from Cargo.toml automatically.
+
+const DEVICE_NAME: &str = match option_env!("DEVICE_NAME") {
+    Some(s) => s,
+    None => "ESP32-S3",
+};
+const DEVICE_TYPE_STR: &str = "ESP32-S3";
+const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 const INDEX_HTML: &[u8] = include_bytes!("assets/inspect_index.html");
 
@@ -554,10 +571,28 @@ fn parse_msg(json: &str) -> InMsg<'_> {
     }
 }
 
-fn hello_ack(rid: u32) -> String {
+fn mdns_hostname_for(ip_c: u8, ip_d: u8) -> String {
+    let slug = slugify(DEVICE_NAME);
+    format!("{}-{:02x}{:02x}.local", slug, ip_c, ip_d)
+}
+
+fn hello_ack(rid: u32, state: &'static SharedState) -> String {
+    let (ip_c, ip_d) = state.lock(|cell| {
+        let s = cell.borrow();
+        (s.network.ip_c, s.network.ip_d)
+    });
+    let hostname = if ip_c == 0 && ip_d == 0 {
+        String::new()
+    } else {
+        mdns_hostname_for(ip_c, ip_d)
+    };
     format!(
-        r#"{{"type":"HelloAck","request_id":{},"version":1,"server_name":"inspect-esp32"}}"#,
-        rid
+        r#"{{"type":"HelloAck","request_id":{},"version":1,"server_name":"inspect-esp32","device_name":"{}","device_type":"{}","firmware_version":"{}","mdns_hostname":"{}"}}"#,
+        rid,
+        json_escape(DEVICE_NAME),
+        DEVICE_TYPE_STR,
+        FIRMWARE_VERSION,
+        json_escape(&hostname),
     )
 }
 fn schema_resp(rid: u32, schema: &str) -> String {
@@ -641,6 +676,226 @@ fn json_escape(s: &str) -> String {
         }
     }
     out
+}
+
+fn slugify(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = String::from(out.trim_end_matches('-'));
+    if trimmed.is_empty() { String::from("device") } else { trimmed }
+}
+
+// ── mDNS / DNS-SD ─────────────────────────────────────────────────────────────
+//
+// Minimal mDNS implementation (RFC 6762 / RFC 6763).  Handles:
+//   - Proactive announcements to 224.0.0.251:5353 every 30 s
+//   - Responding to A queries for <hostname>.local
+//   - Responding to PTR queries for _embedded-inspect._tcp.local
+//
+// No name compression is used in outgoing packets (always legal per RFC 1035
+// §4.1.4).  Incoming pointers are followed when parsing queries.
+
+const MDNS_IP: IpAddress = IpAddress::v4(224, 0, 0, 251);
+
+fn mdns_push_u16(buf: &mut Vec<u8>, v: u16) {
+    buf.push((v >> 8) as u8);
+    buf.push(v as u8);
+}
+
+fn mdns_push_u32(buf: &mut Vec<u8>, v: u32) {
+    buf.push((v >> 24) as u8);
+    buf.push((v >> 16) as u8);
+    buf.push((v >> 8) as u8);
+    buf.push(v as u8);
+}
+
+fn mdns_encode_name(buf: &mut Vec<u8>, name: &str) {
+    for label in name.split('.') {
+        if label.is_empty() { continue; }
+        buf.push(label.len() as u8);
+        buf.extend_from_slice(label.as_bytes());
+    }
+    buf.push(0); // root label
+}
+
+// Encode a single DNS resource record (no name compression).
+// class = 0x8001 (IN | cache-flush bit for mDNS).
+fn mdns_rr(buf: &mut Vec<u8>, name: &str, rtype: u16, ttl: u32, rdata: &[u8]) {
+    mdns_encode_name(buf, name);
+    mdns_push_u16(buf, rtype);      // TYPE
+    mdns_push_u16(buf, 0x8001);     // CLASS = IN | cache-flush
+    mdns_push_u32(buf, ttl);        // TTL
+    mdns_push_u16(buf, rdata.len() as u16); // RDLENGTH
+    buf.extend_from_slice(rdata);
+}
+
+/// Build a full mDNS announcement: PTR + SRV + TXT + A records.
+fn build_mdns_announcement(hostname: &str, instance: &str, ip: [u8; 4]) -> Vec<u8> {
+    let mut pkt = Vec::new();
+    // DNS header
+    mdns_push_u16(&mut pkt, 0);      // ID = 0
+    mdns_push_u16(&mut pkt, 0x8400); // Flags: QR=1 (response), AA=1 (authoritative)
+    mdns_push_u16(&mut pkt, 0);      // QDCOUNT
+    mdns_push_u16(&mut pkt, 4);      // ANCOUNT = 4 records
+    mdns_push_u16(&mut pkt, 0);      // NSCOUNT
+    mdns_push_u16(&mut pkt, 0);      // ARCOUNT
+
+    let svc_type = "_embedded-inspect._tcp.local";
+    let full_instance = format!("{}.{}", instance, svc_type);
+    let hostname_local = format!("{}.local", hostname);
+
+    // PTR: _embedded-inspect._tcp.local → full_instance  (TTL 4500 s per RFC 6762)
+    {
+        let mut rdata = Vec::new();
+        mdns_encode_name(&mut rdata, &full_instance);
+        mdns_rr(&mut pkt, svc_type, 12, 4500, &rdata);
+    }
+    // SRV: full_instance → hostname.local:PORT  (TTL 120 s)
+    {
+        let mut rdata = Vec::new();
+        mdns_push_u16(&mut rdata, 0);    // Priority
+        mdns_push_u16(&mut rdata, 0);    // Weight
+        mdns_push_u16(&mut rdata, PORT); // Port
+        mdns_encode_name(&mut rdata, &hostname_local);
+        mdns_rr(&mut pkt, &full_instance, 33, 120, &rdata);
+    }
+    // TXT: full_instance → key=value strings  (TTL 4500 s)
+    {
+        let mut rdata = Vec::new();
+        for entry in &[
+            format!("name={}", instance),
+            format!("type={}", DEVICE_TYPE_STR),
+            format!("version={}", FIRMWARE_VERSION),
+            String::from("proto=1"),
+        ] {
+            rdata.push(entry.len() as u8);
+            rdata.extend_from_slice(entry.as_bytes());
+        }
+        mdns_rr(&mut pkt, &full_instance, 16, 4500, &rdata);
+    }
+    // A: hostname.local → ip  (TTL 120 s)
+    mdns_rr(&mut pkt, &hostname_local, 1, 120, &ip);
+
+    pkt
+}
+
+/// Parse a DNS name starting at `offset`; advances `offset` past the name.
+/// Returns `None` on malformed input.
+fn mdns_parse_name(pkt: &[u8], offset: &mut usize) -> Option<String> {
+    let mut name = String::new();
+    let mut pos = *offset;
+    let mut jumped = false;
+    let mut hops = 0usize;
+
+    loop {
+        if pos >= pkt.len() { return None; }
+        let len = pkt[pos] as usize;
+
+        if len & 0xC0 == 0xC0 {
+            // Pointer (name compression)
+            if pos + 1 >= pkt.len() { return None; }
+            let ptr = ((len & 0x3F) << 8) | pkt[pos + 1] as usize;
+            if !jumped { *offset = pos + 2; }
+            pos = ptr;
+            jumped = true;
+            hops += 1;
+            if hops > 16 { return None; } // loop guard
+            continue;
+        }
+
+        if len == 0 {
+            if !jumped { *offset = pos + 1; }
+            break;
+        }
+
+        pos += 1;
+        if pos + len > pkt.len() { return None; }
+        if !name.is_empty() { name.push('.'); }
+        name.push_str(core::str::from_utf8(&pkt[pos..pos + len]).ok()?);
+        pos += len;
+    }
+    Some(name)
+}
+
+/// Parse an mDNS query and build a response if any questions match our records.
+/// Returns `None` if the packet is not a query or nothing matches.
+fn handle_mdns_query(pkt: &[u8], hostname: &str, instance: &str, ip: [u8; 4]) -> Option<Vec<u8>> {
+    if pkt.len() < 12 { return None; }
+    let flags = u16::from_be_bytes([pkt[2], pkt[3]]);
+    if flags & 0x8000 != 0 { return None; } // Is a response, not a query — ignore
+
+    let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]) as usize;
+    if qdcount == 0 { return None; }
+
+    let svc_type = "_embedded-inspect._tcp.local";
+    let hostname_local = format!("{}.local", hostname);
+
+    let mut want_a = false;
+    let mut want_ptr = false;
+    let mut offset = 12;
+
+    for _ in 0..qdcount {
+        let qname = mdns_parse_name(pkt, &mut offset)?;
+        if offset + 4 > pkt.len() { return None; }
+        let qtype = u16::from_be_bytes([pkt[offset], pkt[offset + 1]]);
+        offset += 4; // skip qtype + qclass
+
+        if qname.eq_ignore_ascii_case(&hostname_local) && (qtype == 1 || qtype == 255 || qtype == 28) {
+            want_a = true;
+        }
+        if qname.eq_ignore_ascii_case(svc_type) && (qtype == 12 || qtype == 255) {
+            want_ptr = true;
+        }
+    }
+
+    if !want_a && !want_ptr { return None; }
+
+    // Build response — same structure as announcement but filtered to what was asked.
+    let an_count = (want_ptr as u16) * 3 + (want_a as u16);
+    let mut resp = Vec::new();
+    let id = u16::from_be_bytes([pkt[0], pkt[1]]);
+    mdns_push_u16(&mut resp, id);
+    mdns_push_u16(&mut resp, 0x8400);
+    mdns_push_u16(&mut resp, 0);
+    mdns_push_u16(&mut resp, an_count);
+    mdns_push_u16(&mut resp, 0);
+    mdns_push_u16(&mut resp, 0);
+
+    let full_instance = format!("{}.{}", instance, svc_type);
+
+    if want_ptr {
+        let mut rdata = Vec::new();
+        mdns_encode_name(&mut rdata, &full_instance);
+        mdns_rr(&mut resp, svc_type, 12, 4500, &rdata);
+
+        let mut rdata = Vec::new();
+        mdns_push_u16(&mut rdata, 0);
+        mdns_push_u16(&mut rdata, 0);
+        mdns_push_u16(&mut rdata, PORT);
+        mdns_encode_name(&mut rdata, &hostname_local);
+        mdns_rr(&mut resp, &full_instance, 33, 120, &rdata);
+
+        let mut rdata = Vec::new();
+        for entry in &[
+            format!("name={}", instance),
+            format!("type={}", DEVICE_TYPE_STR),
+            format!("version={}", FIRMWARE_VERSION),
+        ] {
+            rdata.push(entry.len() as u8);
+            rdata.extend_from_slice(entry.as_bytes());
+        }
+        mdns_rr(&mut resp, &full_instance, 16, 4500, &rdata);
+    }
+    if want_a {
+        mdns_rr(&mut resp, &hostname_local, 1, 120, &ip);
+    }
+    Some(resp)
 }
 
 fn log_entry_json(entry: &LogEntry, dropped_before: u32) -> String {
@@ -999,6 +1254,92 @@ async fn send_screenshot(
 }
 
 // ── Embassy tasks ─────────────────────────────────────────────────────────────
+
+/// Announce this device on the LAN via mDNS/DNS-SD (_embedded-inspect._tcp.local).
+///
+/// Sends gratuitous multicast announcements every 30 s and responds to
+/// incoming A / PTR queries.  On macOS (Bonjour) this makes the device
+/// reachable at http://<hostname>.local:<PORT>/ without knowing its IP.
+///
+/// If the WiFi driver or AP does not forward multicast to the station,
+/// incoming queries will never arrive; the announcements alone still
+/// populate the Bonjour cache on macOS for ~1200 s per RFC 6762.
+#[embassy_executor::task]
+async fn mdns_task(stack: Stack<'static>) {
+    // Wait until we have an IP before advertising.
+    stack.wait_config_up().await;
+    let cfg = match stack.config_v4() {
+        Some(c) => c,
+        None => return,
+    };
+    let ip = cfg.address.address();
+    let oct = ip.octets();
+
+    let hostname = format!("{}-{:02x}{:02x}", slugify(DEVICE_NAME), oct[2], oct[3]);
+    let instance = String::from(DEVICE_NAME);
+
+    esp_println::println!("[mdns] hostname={}.local  instance={}", hostname, instance);
+
+    // --- UDP socket setup ---
+    let mut rx_meta  = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf   = [0u8; 1500];
+    let mut tx_meta  = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf   = [0u8; 1500];
+    let mut socket   = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+
+    // Best-effort multicast group join (requires embassy-net/multicast feature
+    // and AP forwarding multicast to the associated station).
+    if let Err(e) = stack.join_multicast_group(MDNS_IP) {
+        esp_println::println!("[mdns] join_multicast_group failed: {:?}", e);
+        // Continue anyway — announcements will still work.
+    }
+
+    if socket.bind(5353).is_err() {
+        esp_println::println!("[mdns] failed to bind UDP 5353");
+        return;
+    }
+
+    let mdns_ep = IpEndpoint::new(MDNS_IP, 5353);
+    let announcement = build_mdns_announcement(&hostname, &instance, oct);
+
+    // Send initial announcement immediately.
+    let _ = socket.send_to(&announcement, mdns_ep).await;
+    ilog!(
+        LogLevel::Info, "mdns",
+        "advertised {} at {}.{}.{}.{}:{} as _embedded-inspect._tcp.local",
+        hostname, oct[0], oct[1], oct[2], oct[3], PORT
+    );
+
+    let mut next_announce = Instant::now() + Duration::from_secs(30);
+    let mut recv_pkt = [0u8; 512];
+
+    loop {
+        let now = Instant::now();
+        let remaining = if now >= next_announce {
+            Duration::from_millis(1)
+        } else {
+            next_announce - now
+        };
+
+        let timed_out = match with_timeout(remaining, socket.recv_from(&mut recv_pkt)).await {
+            Err(_) => true, // timeout = time to announce
+            Ok(Ok((n, _from))) => {
+                // Try to answer the query.
+                if let Some(resp) = handle_mdns_query(&recv_pkt[..n], &hostname, &instance, oct) {
+                    let _ = socket.send_to(&resp, mdns_ep).await;
+                }
+                false
+            }
+            Ok(Err(_)) => break, // socket error — give up
+        };
+
+        if timed_out || Instant::now() >= next_announce {
+            let pkt = build_mdns_announcement(&hostname, &instance, oct);
+            let _ = socket.send_to(&pkt, mdns_ep).await;
+            next_announce = Instant::now() + Duration::from_secs(30);
+        }
+    }
+}
 
 #[embassy_executor::task]
 async fn connection(mut controller: WifiController<'static>) {
@@ -1489,7 +1830,7 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
                 "Hello request_id={} — sending HelloAck",
                 request_id
             );
-            hello_ack(request_id)
+            hello_ack(request_id, state)
         }
         InMsg::GetSchema { request_id } => schema_resp(request_id, schema_json),
         InMsg::GetValue { request_id, path } => {
@@ -1570,13 +1911,14 @@ async fn main(spawner: Spawner) -> ! {
     let (stack, runner) = embassy_net::new(
         interfaces.station,
         embassy_net::Config::dhcpv4(Default::default()),
-        mk_static!(StackResources<4>, StackResources::<4>::new()),
+        mk_static!(StackResources<6>, StackResources::<6>::new()),
         0x1234_5678_u64,
     );
 
     spawner.spawn(net_task(runner).expect("net_task"));
     spawner.spawn(connection(controller).expect("connection"));
     spawner.spawn(debug_server(stack, state, fb_state).expect("debug_server"));
+    spawner.spawn(mdns_task(stack).expect("mdns_task"));
 
     ilog!(LogLevel::Info, "wifi", "connecting to '{}'...", SSID);
     stack.wait_config_up().await;

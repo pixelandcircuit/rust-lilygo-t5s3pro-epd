@@ -46,6 +46,7 @@ debug-inspect = [
     "dep:httparse",
     "dep:qrcode-core",
     "embassy-net/tcp",
+    "embassy-net/multicast",
 ]
 
 [[example]]
