@@ -109,7 +109,11 @@ fn flash_load(key: u8) -> Option<u32> {
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
     match block_on(map::fetch_item::<u8, u32, _>(
-        &mut flash, NVS_FLASH_RANGE, &mut cache, &mut buf, &key,
+        &mut flash,
+        NVS_FLASH_RANGE,
+        &mut cache,
+        &mut buf,
+        &key,
     )) {
         Ok(v) => v,
         Err(e) => {
@@ -124,7 +128,12 @@ fn flash_save(key: u8, value: u32) {
     let mut cache = NoCache::new();
     let mut buf = [0u8; 64];
     if let Err(e) = block_on(map::store_item::<u8, u32, _>(
-        &mut flash, NVS_FLASH_RANGE, &mut cache, &mut buf, &key, &value,
+        &mut flash,
+        NVS_FLASH_RANGE,
+        &mut cache,
+        &mut buf,
+        &key,
+        &value,
     )) {
         println!("flash_save: error {:?}", e);
     }
@@ -144,19 +153,19 @@ fn main() -> ! {
     // distinguishing genuine power-on from a software crash or WDT bite.
     let reason = reset_reason(Cpu::ProCpu);
     let reason_str = match reason {
-        Some(SocResetReason::ChipPowerOn)   => "power-on",
+        Some(SocResetReason::ChipPowerOn) => "power-on",
         Some(SocResetReason::CoreDeepSleep) => "deep-sleep wakeup",
-        Some(SocResetReason::CoreSw)        => "software reset",
-        Some(SocResetReason::CpuSw)         => "CPU software reset",
-        Some(SocResetReason::SysBrownOut)   => "brownout",
-        Some(SocResetReason::CoreMwdt0)     |
-        Some(SocResetReason::CoreMwdt1)     |
-        Some(SocResetReason::CpuMwdt0)      |
-        Some(SocResetReason::CpuMwdt1)      => "watchdog",
-        Some(SocResetReason::CoreRtcWdt)    |
-        Some(SocResetReason::CpuRtcWdt)     |
-        Some(SocResetReason::SysRtcWdt)     => "RTC watchdog",
-        _                                   => "unknown",
+        Some(SocResetReason::CoreSw) => "software reset",
+        Some(SocResetReason::CpuSw) => "CPU software reset",
+        Some(SocResetReason::SysBrownOut) => "brownout",
+        Some(SocResetReason::CoreMwdt0)
+        | Some(SocResetReason::CoreMwdt1)
+        | Some(SocResetReason::CpuMwdt0)
+        | Some(SocResetReason::CpuMwdt1) => "watchdog",
+        Some(SocResetReason::CoreRtcWdt)
+        | Some(SocResetReason::CpuRtcWdt)
+        | Some(SocResetReason::SysRtcWdt) => "RTC watchdog",
+        _ => "unknown",
     };
     println!("reset reason : {}", reason_str);
 

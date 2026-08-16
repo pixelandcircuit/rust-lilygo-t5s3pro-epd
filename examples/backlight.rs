@@ -33,8 +33,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 fn main() -> ! {
     esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     let psram_config = esp_hal::psram::PsramConfig {

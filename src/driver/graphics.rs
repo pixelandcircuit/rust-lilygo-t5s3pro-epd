@@ -14,8 +14,7 @@ impl<'a> DrawTarget for Display<'a> {
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
         for Pixel(coord, color) in pixels.into_iter() {
-            let (x, y) =
-                translate_coord_rotation(coord.x as u16, coord.y as u16, &self.rotation());
+            let (x, y) = translate_coord_rotation(coord.x as u16, coord.y as u16, &self.rotation());
             let result = self.set_pixel(x, y, color.luma());
             if matches!(result, Err(Error::OutOfBounds)) {
                 continue;

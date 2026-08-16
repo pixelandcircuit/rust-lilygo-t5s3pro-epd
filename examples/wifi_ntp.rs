@@ -16,13 +16,16 @@ use alloc::{format, string::String, vec::Vec};
 
 use embassy_executor::Spawner;
 use embassy_net::{
-    Runner, StackResources,
     udp::{PacketMetadata, UdpSocket},
+    Runner, StackResources,
 };
 use embassy_time::{Duration, Timer};
 use embedded_graphics::{
     geometry::Point,
-    mono_font::{ascii::{FONT_7X13, FONT_9X18}, MonoTextStyle},
+    mono_font::{
+        ascii::{FONT_7X13, FONT_9X18},
+        MonoTextStyle,
+    },
     pixelcolor::Gray4,
     prelude::*,
     text::{Alignment, Text},
@@ -30,12 +33,10 @@ use embedded_graphics::{
 };
 use esp_backtrace as _;
 use esp_hal::{
-    clock::CpuClock,
-    interrupt::software::SoftwareInterruptControl,
-    rtc_cntl::Rtc,
+    clock::CpuClock, interrupt::software::SoftwareInterruptControl, rtc_cntl::Rtc,
     timer::timg::TimerGroup,
 };
-use esp_radio::wifi::{Config, ControllerConfig, Interface, WifiController, sta::StationConfig};
+use esp_radio::wifi::{sta::StationConfig, Config, ControllerConfig, Interface, WifiController};
 use static_cell::StaticCell;
 
 use epaper::driver::display::{Display, DrawMode};
@@ -51,11 +52,17 @@ macro_rules! mk_static {
 
 // Credentials from environment at build time; fall back to placeholders so
 // the example still type-checks without env vars set.
-const SSID:     &str = match option_env!("WIFI_SSID") { Some(s) => s, None => "SSID" };
-const PASSWORD: &str = match option_env!("WIFI_PASS") { Some(s) => s, None => "PASSWORD" };
+const SSID: &str = match option_env!("WIFI_SSID") {
+    Some(s) => s,
+    None => "SSID",
+};
+const PASSWORD: &str = match option_env!("WIFI_PASS") {
+    Some(s) => s,
+    None => "PASSWORD",
+};
 
 const NTP_ADDR: [u8; 4] = [216, 239, 35, 0]; // time.google.com
-const NTP_UNIX_OFFSET: u64 = 2_208_988_800;   // NTP epoch → Unix epoch (70 years in seconds)
+const NTP_UNIX_OFFSET: u64 = 2_208_988_800; // NTP epoch → Unix epoch (70 years in seconds)
 
 // ── Console ──────────────────────────────────────────────────────────────────
 
@@ -66,7 +73,10 @@ struct Console<'d> {
 
 impl<'d> Console<'d> {
     fn new(display: Display<'d>) -> Self {
-        Self { display, lines: Vec::new() }
+        Self {
+            display,
+            lines: Vec::new(),
+        }
     }
 
     fn log(&mut self, msg: &str) {
@@ -89,7 +99,9 @@ impl<'d> Console<'d> {
             Point::new(480, 18),
             MonoTextStyle::new(&FONT_9X18, Gray4::BLACK),
             Alignment::Center,
-        ).draw(&mut self.display).unwrap();
+        )
+        .draw(&mut self.display)
+        .unwrap();
 
         let style = MonoTextStyle::new(&FONT_7X13, Gray4::BLACK);
         for (i, line) in self.lines.iter().enumerate() {
@@ -98,7 +110,9 @@ impl<'d> Console<'d> {
                 Point::new(8, 50 + i as i32 * 16),
                 style,
                 Alignment::Left,
-            ).draw(&mut self.display).unwrap();
+            )
+            .draw(&mut self.display)
+            .unwrap();
         }
     }
 }
@@ -144,7 +158,8 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.LCD_CAM,
         peripherals.RMT,
         peripherals.I2C0,
-    ).expect("display init");
+    )
+    .expect("display init");
     display.power_on();
 
     // RTC — used for NTP seed and to store the synced time
@@ -167,7 +182,8 @@ async fn main(spawner: Spawner) -> ! {
     let (controller, interfaces) = esp_radio::wifi::new(
         peripherals.WIFI,
         ControllerConfig::default().with_initial_config(station_config),
-    ).expect("wifi init");
+    )
+    .expect("wifi init");
 
     // Embassy-net stack (uses RTC uptime as random seed — differs each boot)
     let seed = rtc.current_time_us();
@@ -194,9 +210,9 @@ async fn main(spawner: Spawner) -> ! {
     console.log("Querying NTP (time.google.com:123)...");
 
     let mut rx_meta = [PacketMetadata::EMPTY; 4];
-    let mut rx_buf  = [0u8; 512];
+    let mut rx_buf = [0u8; 512];
     let mut tx_meta = [PacketMetadata::EMPTY; 4];
-    let mut tx_buf  = [0u8; 256];
+    let mut tx_buf = [0u8; 256];
     let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
     socket.bind(12345).expect("bind");
 
@@ -210,20 +226,26 @@ async fn main(spawner: Spawner) -> ! {
 
     if let Err(e) = socket.send_to(&pkt, ntp_endpoint).await {
         console.log(&format!("ERROR: NTP send: {:?}", e));
-        loop { Timer::after(Duration::from_secs(60)).await; }
+        loop {
+            Timer::after(Duration::from_secs(60)).await;
+        }
     }
 
     let (n, _from) = match socket.recv_from(&mut pkt).await {
         Ok(r) => r,
         Err(e) => {
             console.log(&format!("ERROR: NTP recv: {:?}", e));
-            loop { Timer::after(Duration::from_secs(60)).await; }
+            loop {
+                Timer::after(Duration::from_secs(60)).await;
+            }
         }
     };
 
     if n < 48 {
         console.log(&format!("ERROR: NTP response too short ({} bytes)", n));
-        loop { Timer::after(Duration::from_secs(60)).await; }
+        loop {
+            Timer::after(Duration::from_secs(60)).await;
+        }
     }
 
     // Parse NTP transmit timestamp at bytes 40–47 (big-endian seconds + fraction)
@@ -232,11 +254,13 @@ async fn main(spawner: Spawner) -> ! {
 
     if ntp_secs <= NTP_UNIX_OFFSET {
         console.log("ERROR: NTP returned pre-Unix-epoch time (server error?)");
-        loop { Timer::after(Duration::from_secs(60)).await; }
+        loop {
+            Timer::after(Duration::from_secs(60)).await;
+        }
     }
 
     let unix_secs = ntp_secs - NTP_UNIX_OFFSET;
-    let unix_us   = unix_secs * 1_000_000 + ((ntp_frac * 1_000_000) >> 32);
+    let unix_us = unix_secs * 1_000_000 + ((ntp_frac * 1_000_000) >> 32);
 
     rtc.set_current_time_us(unix_us);
 

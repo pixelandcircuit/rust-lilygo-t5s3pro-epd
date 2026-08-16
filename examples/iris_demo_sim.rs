@@ -20,25 +20,37 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use iris_ui::{
-    FontKind, Theme, ViewStyle,
     device::EmbeddedDrawingContext,
     geom::{Bounds, Point},
     input::{InputAction, InputEvent, OutputAction},
     label::make_label,
     layouts::layout_vbox,
     panel::make_panel,
-    scene::{Scene, click_at, draw_scene, event_at_focused, layout_scene},
+    scene::{click_at, draw_scene, event_at_focused, layout_scene, Scene},
     toggle_button::make_toggle_button,
     view::ViewId,
+    FontKind, Theme, ViewStyle,
 };
 
 const THEME: Theme = Theme {
-    font:      FontKind::Bitmap(FONT_10X20),
+    font: FontKind::Bitmap(FONT_10X20),
     bold_font: FontKind::Bitmap(FONT_9X18_BOLD),
-    standard:  ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-    accented:  ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
-    selected:  ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
-    panel:     ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+    standard: ViewStyle {
+        fill: Rgb565::WHITE,
+        text: Rgb565::BLACK,
+    },
+    accented: ViewStyle {
+        fill: Rgb565::BLACK,
+        text: Rgb565::WHITE,
+    },
+    selected: ViewStyle {
+        fill: Rgb565::BLACK,
+        text: Rgb565::WHITE,
+    },
+    panel: ViewStyle {
+        fill: Rgb565::WHITE,
+        text: Rgb565::BLACK,
+    },
 };
 
 const SCALE: u32 = 2;
@@ -53,7 +65,10 @@ fn build_scene() -> Scene {
         .with_layout(Some(layout_vbox))
         .with_visible(true);
     scene.add_view_to_parent(make_label("l1", "The first label"), &panel_id);
-    scene.add_view_to_parent(make_toggle_button(&ViewId::new("toggle1"), "Toggle"), &panel.name);
+    scene.add_view_to_parent(
+        make_toggle_button(&ViewId::new("toggle1"), "Toggle"),
+        &panel.name,
+    );
     scene.add_view_to_root(panel);
     scene.mark_dirty_all();
     scene.mark_layout_dirty();
@@ -62,9 +77,9 @@ fn build_scene() -> Scene {
 
 fn handle_action(action: Option<OutputAction>, scene: &mut Scene) {
     let text = match action {
-        Some(OutputAction::Command(cmd))       => format!("Command: {}", cmd),
+        Some(OutputAction::Command(cmd)) => format!("Command: {}", cmd),
         Some(OutputAction::Selected(lbl, idx)) => format!("Selected: {} ({})", lbl, idx),
-        Some(OutputAction::Focused(id))        => format!("Focused: {}", id.as_str()),
+        Some(OutputAction::Focused(id)) => format!("Focused: {}", id.as_str()),
         _ => return,
     };
     println!("[iris] {}", text);
@@ -96,10 +111,10 @@ fn main() {
                 SimulatorEvent::KeyDown { keycode, .. } => {
                     use embedded_graphics_simulator::sdl2::Keycode;
                     let evt = match keycode {
-                        Keycode::LEFT | Keycode::UP =>
-                            InputEvent::Action(InputAction::FocusPrev),
-                        Keycode::RIGHT | Keycode::DOWN =>
-                            InputEvent::Action(InputAction::FocusNext),
+                        Keycode::LEFT | Keycode::UP => InputEvent::Action(InputAction::FocusPrev),
+                        Keycode::RIGHT | Keycode::DOWN => {
+                            InputEvent::Action(InputAction::FocusNext)
+                        }
                         _ => continue,
                     };
                     event_at_focused(&mut scene, &evt);

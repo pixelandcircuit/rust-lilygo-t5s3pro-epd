@@ -31,24 +31,24 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 // ─── LoRa parameters — must match the transmitter ───────────────────────────
 const FREQ_HZ: u64 = 915_000_000; // 915 MHz (US/AU); 868_000_000 for EU
-const SF:      u8  = 7;           // Spreading factor: 5–12
-const BW:      u8  = 0x04;        // Bandwidth: 0x04=125kHz  0x05=250kHz  0x06=500kHz
-const CR:      u8  = 0x01;        // Coding rate: 4/5=0x01  4/6=0x02  4/7=0x03  4/8=0x04
-// ────────────────────────────────────────────────────────────────────────────
+const SF: u8 = 7; // Spreading factor: 5–12
+const BW: u8 = 0x04; // Bandwidth: 0x04=125kHz  0x05=250kHz  0x06=500kHz
+const CR: u8 = 0x01; // Coding rate: 4/5=0x01  4/6=0x02  4/7=0x03  4/8=0x04
+                     // ────────────────────────────────────────────────────────────────────────────
 
 // SX1262 command opcodes (Semtech SX1262 datasheet §13.1)
-const SET_STANDBY:        u8 = 0x80;
-const SET_PACKET_TYPE:    u8 = 0x01;
-const SET_RF_FREQUENCY:   u8 = 0x86;
-const SET_MOD_PARAMS:     u8 = 0x8B;
-const SET_PKT_PARAMS:     u8 = 0x8C;
+const SET_STANDBY: u8 = 0x80;
+const SET_PACKET_TYPE: u8 = 0x01;
+const SET_RF_FREQUENCY: u8 = 0x86;
+const SET_MOD_PARAMS: u8 = 0x8B;
+const SET_PKT_PARAMS: u8 = 0x8C;
 const SET_DIO_IRQ_PARAMS: u8 = 0x08;
-const SET_RX:             u8 = 0x82;
-const GET_IRQ_STATUS:     u8 = 0x12;
-const CLR_IRQ_STATUS:     u8 = 0x02;
-const GET_RX_BUF_STATUS:  u8 = 0x13;
-const GET_PKT_STATUS:     u8 = 0x14;
-const READ_BUFFER:        u8 = 0x1E;
+const SET_RX: u8 = 0x82;
+const GET_IRQ_STATUS: u8 = 0x12;
+const CLR_IRQ_STATUS: u8 = 0x02;
+const GET_RX_BUF_STATUS: u8 = 0x13;
+const GET_PKT_STATUS: u8 = 0x14;
+const READ_BUFFER: u8 = 0x1E;
 
 // IRQ flag bits (§13.3.2 Table 13-29)
 const IRQ_RX_DONE: u16 = 1 << 1;
@@ -63,12 +63,17 @@ fn freq_reg(hz: u64) -> [u8; 4] {
 }
 
 fn bw_label(bw: u8) -> &'static str {
-    match bw { 0x04 => "125", 0x05 => "250", 0x06 => "500", _ => "?" }
+    match bw {
+        0x04 => "125",
+        0x05 => "250",
+        0x06 => "500",
+        _ => "?",
+    }
 }
 
 struct Radio<'d> {
-    spi:  Spi<'d, esp_hal::Blocking>,
-    cs:   Output<'d>,
+    spi: Spi<'d, esp_hal::Blocking>,
+    cs: Output<'d>,
     busy: Input<'d>,
 }
 
@@ -111,10 +116,10 @@ fn main() -> ! {
     let delay = Delay::new();
     delay.delay_millis(100); // power-rail stabilisation
 
-    let mut reset = Output::new(peripherals.GPIO1,  Level::High, OutputConfig::default());
-    let cs        = Output::new(peripherals.GPIO46, Level::High, OutputConfig::default());
-    let busy      = Input::new(peripherals.GPIO47,  InputConfig::default());
-    let dio1      = Input::new(peripherals.GPIO10,  InputConfig::default());
+    let mut reset = Output::new(peripherals.GPIO1, Level::High, OutputConfig::default());
+    let cs = Output::new(peripherals.GPIO46, Level::High, OutputConfig::default());
+    let busy = Input::new(peripherals.GPIO47, InputConfig::default());
+    let dio1 = Input::new(peripherals.GPIO10, InputConfig::default());
 
     // SPI2 — default Config is 1 MHz which is well within SX1262's 16 MHz limit
     let spi = Spi::new(peripherals.SPI2, SpiConfig::default())
@@ -155,18 +160,28 @@ fn main() -> ! {
     let irq_mask = IRQ_RX_DONE | IRQ_CRC_ERR | IRQ_TIMEOUT;
     let hi = (irq_mask >> 8) as u8;
     let lo = irq_mask as u8;
-    radio.cmd(&[SET_DIO_IRQ_PARAMS,
-        hi, lo,     // global mask
-        hi, lo,     // DIO1
-        0, 0,       // DIO2
-        0, 0,       // DIO3
+    radio.cmd(&[
+        SET_DIO_IRQ_PARAMS,
+        hi,
+        lo, // global mask
+        hi,
+        lo, // DIO1
+        0,
+        0, // DIO2
+        0,
+        0, // DIO3
     ]);
 
     // Enter continuous receive (timeout=0xFFFFFF means never time out)
     radio.cmd(&[SET_RX, 0xFF, 0xFF, 0xFF]);
 
-    println!("[lora] {} Hz  SF{}  BW{} kHz  CR 4/{}  — waiting for packets...",
-        FREQ_HZ, SF, bw_label(BW), CR + 4);
+    println!(
+        "[lora] {} Hz  SF{}  BW{} kHz  CR 4/{}  — waiting for packets...",
+        FREQ_HZ,
+        SF,
+        bw_label(BW),
+        CR + 4
+    );
 
     let mut pkt_buf = [0u8; 259]; // 3-byte cmd header + up to 256 bytes payload
     let mut count: u32 = 0;
@@ -197,13 +212,13 @@ fn main() -> ! {
         let mut q = [GET_RX_BUF_STATUS, 0x00, 0x00, 0x00];
         radio.query(&mut q);
         let payload_len = q[2] as usize;
-        let rx_offset   = q[3];
+        let rx_offset = q[3];
 
         // GetPacketStatus (LoRa) → buf[2]=RSSI_pkt, buf[3]=SNR_pkt, buf[4]=signal_RSSI
         let mut q = [GET_PKT_STATUS, 0x00, 0x00, 0x00, 0x00];
         radio.query(&mut q);
-        let rssi = -(q[2] as i16) / 2;          // dBm = -RssiPkt/2
-        let snr  = (q[3] as i8) as i16 / 4;     // dB  =  SnrPkt/4 (signed)
+        let rssi = -(q[2] as i16) / 2; // dBm = -RssiPkt/2
+        let snr = (q[3] as i8) as i16 / 4; // dB  =  SnrPkt/4 (signed)
 
         if irq & IRQ_CRC_ERR != 0 {
             println!("[lora] CRC error  rssi={} dBm  snr={} dB", rssi, snr);
@@ -215,21 +230,31 @@ fn main() -> ! {
         pkt_buf[0] = READ_BUFFER;
         pkt_buf[1] = rx_offset;
         pkt_buf[2] = 0x00; // NOP — SX1262 uses this byte for device status
-        for b in pkt_buf[3..3 + n].iter_mut() { *b = 0x00; }
+        for b in pkt_buf[3..3 + n].iter_mut() {
+            *b = 0x00;
+        }
         radio.query(&mut pkt_buf[..3 + n]);
         let payload = &pkt_buf[3..3 + n];
 
         count += 1;
-        println!("[lora] #{:4}  len={:3}  rssi={:4} dBm  snr={:3} dB",
-            count, n, rssi, snr);
+        println!(
+            "[lora] #{:4}  len={:3}  rssi={:4} dBm  snr={:3} dB",
+            count, n, rssi, snr
+        );
 
         // Hex dump (16 bytes per line)
         for (i, &b) in payload.iter().enumerate() {
-            if i % 16 == 0 { print!("        {:04x}: ", i); }
+            if i % 16 == 0 {
+                print!("        {:04x}: ", i);
+            }
             print!("{:02x} ", b);
-            if (i + 1) % 16 == 0 { println!(); }
+            if (i + 1) % 16 == 0 {
+                println!();
+            }
         }
-        if n % 16 != 0 { println!(); }
+        if n % 16 != 0 {
+            println!();
+        }
 
         // Printable ASCII? Show as text
         if payload.iter().all(|&b| b >= 0x20 && b < 0x7F) {

@@ -15,8 +15,8 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 
-use epaper::driver::{Display, DrawMode, Gt911};
 use epaper::driver::gt911::GT911_ADDR_PRIMARY;
+use epaper::driver::{Display, DrawMode, Gt911};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -30,8 +30,7 @@ const HEADER_H: i32 = 50;
 fn main() -> ! {
     esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     let psram_config = esp_hal::psram::PsramConfig {
@@ -57,14 +56,20 @@ fn main() -> ! {
 
     // ── Touch setup (same sequence as touch_button) ───────────────────────────
     let touch_addr = display.detect_touch_addr().unwrap_or_else(|| {
-        println!("WARNING: GT911 not detected — defaulting to 0x{:02X}", GT911_ADDR_PRIMARY);
+        println!(
+            "WARNING: GT911 not detected — defaulting to 0x{:02X}",
+            GT911_ADDR_PRIMARY
+        );
         GT911_ADDR_PRIMARY
     });
     println!("GT911 at I2C 0x{:02X}", touch_addr);
     let mut gt911 = Gt911::new(touch_addr);
 
     let pid = display.touch_product_id(&mut gt911);
-    println!("GT911 product ID: \"{}{}{}\"", pid[0] as char, pid[1] as char, pid[2] as char);
+    println!(
+        "GT911 product ID: \"{}{}{}\"",
+        pid[0] as char, pid[1] as char, pid[2] as char
+    );
 
     display.configure_touch(&mut gt911, 960, 540);
     delay.delay_millis(200);

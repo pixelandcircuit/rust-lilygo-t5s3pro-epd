@@ -30,16 +30,15 @@ macro_rules! poll_pins {
 
 #[main]
 fn main() -> ! {
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     let cfg = InputConfig::default().with_pull(Pull::Up);
 
-    let p1  = Input::new(peripherals.GPIO1,  cfg);
-    let p2  = Input::new(peripherals.GPIO2,  cfg);
-    let p3  = Input::new(peripherals.GPIO3,  cfg);
-    let p9  = Input::new(peripherals.GPIO9,  cfg);
+    let p1 = Input::new(peripherals.GPIO1, cfg);
+    let p2 = Input::new(peripherals.GPIO2, cfg);
+    let p3 = Input::new(peripherals.GPIO3, cfg);
+    let p9 = Input::new(peripherals.GPIO9, cfg);
     let p10 = Input::new(peripherals.GPIO10, cfg);
     let p12 = Input::new(peripherals.GPIO12, cfg);
     let p13 = Input::new(peripherals.GPIO13, cfg);
@@ -52,11 +51,12 @@ fn main() -> ! {
 
     println!("find_button: press the forward button — watching GPIOs 1,2,3,9,10,12,13,14,21,38,46");
 
-    poll_pins!(delay,
-        ("GPIO1",  p1),
-        ("GPIO2",  p2),
-        ("GPIO3",  p3),
-        ("GPIO9",  p9),
+    poll_pins!(
+        delay,
+        ("GPIO1", p1),
+        ("GPIO2", p2),
+        ("GPIO3", p3),
+        ("GPIO9", p9),
         ("GPIO10", p10),
         ("GPIO12", p12),
         ("GPIO13", p13),

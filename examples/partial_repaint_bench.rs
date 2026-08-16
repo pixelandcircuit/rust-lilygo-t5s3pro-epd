@@ -56,7 +56,12 @@ fn run_bench(display: &mut Display, w: u32, h: u32) {
     let x = (960u32.saturating_sub(w)) / 2;
     let y = (540u32.saturating_sub(h)) / 2;
     let rect = Rectangle::new(Point::new(x as i32, y as i32), Size::new(w, h));
-    let clip = EpdRect { x: x as u16, y: y as u16, width: w as u16, height: h as u16 };
+    let clip = EpdRect {
+        x: x as u16,
+        y: y as u16,
+        width: w as u16,
+        height: h as u16,
+    };
     let mut times = [0u64; ITERS];
 
     for i in 0..ITERS {

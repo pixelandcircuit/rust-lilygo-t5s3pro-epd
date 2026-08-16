@@ -32,7 +32,7 @@ fn make_card(w: usize, h: usize) -> Vec<u8> {
             if x % 2 == 0 {
                 data[pi / 2] |= luma << 4; // high nibble = left pixel
             } else {
-                data[pi / 2] |= luma;      // low nibble  = right pixel
+                data[pi / 2] |= luma; // low nibble  = right pixel
             }
         }
     }
@@ -47,7 +47,11 @@ fn card_luma(x: usize, y: usize, w: usize, h: usize) -> u8 {
         (x * 15 / (hw - 1)) as u8
     } else if x >= hw && y < hh {
         // Top-right: 8×8 checkerboard (black / white)
-        if ((x / 8) + (y / 8)) % 2 == 0 { 0 } else { 15 }
+        if ((x / 8) + (y / 8)) % 2 == 0 {
+            0
+        } else {
+            15
+        }
     } else if x < hw {
         // Bottom-left: 16 solid vertical bands
         ((x * 16 / hw) % 16) as u8

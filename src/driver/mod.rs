@@ -1,9 +1,9 @@
 extern crate alloc;
 
 pub mod display;
+pub(crate) mod ed047tc1;
 pub mod graphics;
 pub mod gt911;
-pub(crate) mod ed047tc1;
 pub(crate) mod rmt;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

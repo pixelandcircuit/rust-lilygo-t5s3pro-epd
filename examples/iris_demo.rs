@@ -19,14 +19,16 @@ use embedded_graphics::{
     pixelcolor::{Gray4, Rgb565, RgbColor},
     Pixel,
 };
+use epaper::driver::gt911::GT911_ADDR_PRIMARY;
+use epaper::driver::{Display, DrawMode, Gt911, Rectangle};
 use esp_backtrace as _;
 use esp_hal::{
     clock::CpuClock,
     delay::Delay,
     gpio::{Input, InputConfig, Pull},
 };
+use iris_ui::toggle_button::make_toggle_button;
 use iris_ui::{
-    FontKind, Theme, ViewStyle,
     button::{make_button, make_full_button},
     device::EmbeddedDrawingContext,
     geom::Bounds,
@@ -34,35 +36,45 @@ use iris_ui::{
     label::{make_header_label, make_label},
     layouts::{layout_hbox, layout_std_panel, layout_vbox},
     panel::make_panel,
-    scene::{Scene, click_at, draw_scene, event_at_focused, layout_scene},
+    scene::{click_at, draw_scene, event_at_focused, layout_scene, Scene},
     toggle_group::make_toggle_group,
     view::{Align, Flex, ViewId},
+    FontKind, Theme, ViewStyle,
 };
-use iris_ui::toggle_button::make_toggle_button;
-use epaper::driver::{Display, DrawMode, Gt911, Rectangle};
-use epaper::driver::gt911::GT911_ADDR_PRIMARY;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
 const THEME: Theme = Theme {
-    font:      FontKind::Bitmap(FONT_10X20),
+    font: FontKind::Bitmap(FONT_10X20),
     bold_font: FontKind::Bitmap(FONT_9X18_BOLD),
-    standard:  ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
-    accented:  ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
-    selected:  ViewStyle { fill: Rgb565::BLACK, text: Rgb565::WHITE },
-    panel:     ViewStyle { fill: Rgb565::WHITE, text: Rgb565::BLACK },
+    standard: ViewStyle {
+        fill: Rgb565::WHITE,
+        text: Rgb565::BLACK,
+    },
+    accented: ViewStyle {
+        fill: Rgb565::BLACK,
+        text: Rgb565::WHITE,
+    },
+    selected: ViewStyle {
+        fill: Rgb565::BLACK,
+        text: Rgb565::WHITE,
+    },
+    panel: ViewStyle {
+        fill: Rgb565::WHITE,
+        text: Rgb565::BLACK,
+    },
 };
 
 // ViewId constants for scene nodes we need to address later
-const SPACER_TOP:   ViewId = ViewId::new("spacer_top");
-const SPACER_BOT:   ViewId = ViewId::new("spacer_bot");
+const SPACER_TOP: ViewId = ViewId::new("spacer_top");
+const SPACER_BOT: ViewId = ViewId::new("spacer_bot");
 const CENTER_PANEL: ViewId = ViewId::new("center");
-const BTN_ROW:      ViewId = ViewId::new("btn_row");
-const BTN1:         ViewId = ViewId::new("btn1");
-const BTN2:         ViewId = ViewId::new("btn2");
-const BTN3:         ViewId = ViewId::new("btn3");
-const TOGGLE:       ViewId = ViewId::new("toggle");
-const STATUS:       ViewId = ViewId::new("status");
+const BTN_ROW: ViewId = ViewId::new("btn_row");
+const BTN1: ViewId = ViewId::new("btn1");
+const BTN2: ViewId = ViewId::new("btn2");
+const BTN3: ViewId = ViewId::new("btn3");
+const TOGGLE: ViewId = ViewId::new("toggle");
+const STATUS: ViewId = ViewId::new("status");
 
 // ── Rgb565 → Gray4 adapter ────────────────────────────────────────────────────
 // iris-ui's EmbeddedDrawingContext requires DrawTarget<Color = Rgb565>.
@@ -79,13 +91,17 @@ impl<'a, 'd> DrawTarget for Rgb565Adapter<'a, 'd> {
         pixels: I,
     ) -> Result<(), Self::Error> {
         self.0.draw_iter(
-            pixels.into_iter().map(|Pixel(c, col)| Pixel(c, rgb565_to_gray4(col))),
+            pixels
+                .into_iter()
+                .map(|Pixel(c, col)| Pixel(c, rgb565_to_gray4(col))),
         )
     }
 }
 
 impl<'a, 'd> OriginDimensions for Rgb565Adapter<'a, 'd> {
-    fn size(&self) -> EGSize { self.0.size() }
+    fn size(&self) -> EGSize {
+        self.0.size()
+    }
 }
 
 fn rgb565_to_gray4(c: Rgb565) -> Gray4 {
@@ -120,9 +136,9 @@ fn render(display: &mut Display, scene: &mut Scene, scale: u32) {
 
 fn handle_action(action: Option<OutputAction>, scene: &mut Scene) {
     let text = match action {
-        Some(OutputAction::Command(cmd))       => alloc::format!("Command: {}", cmd),
+        Some(OutputAction::Command(cmd)) => alloc::format!("Command: {}", cmd),
         Some(OutputAction::Selected(lbl, idx)) => alloc::format!("Selected: {} ({})", lbl, idx),
-        Some(OutputAction::Focused(id))        => alloc::format!("Focused: {}", id.as_str()),
+        Some(OutputAction::Focused(id)) => alloc::format!("Focused: {}", id.as_str()),
         _ => return,
     };
     esp_println::println!("[iris] {}", text);
@@ -142,7 +158,7 @@ fn main() -> ! {
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
     // Extract GPIO0 and GPIO38 before pin_config! consumes the EPD pins
-    let gpio0  = peripherals.GPIO0;
+    let gpio0 = peripherals.GPIO0;
     let gpio38 = peripherals.GPIO38;
 
     let mut display = Display::new(
@@ -151,7 +167,8 @@ fn main() -> ! {
         peripherals.LCD_CAM,
         peripherals.RMT,
         peripherals.I2C0,
-    ).expect("display init");
+    )
+    .expect("display init");
 
     let delay = Delay::new();
     delay.delay_millis(100);
@@ -172,25 +189,28 @@ fn main() -> ! {
     display.init_touch(&mut gt911);
 
     // Physical buttons (active-low with pull-up)
-    let boot_btn = Input::new(gpio0,  InputConfig::default().with_pull(Pull::Up));
+    let boot_btn = Input::new(gpio0, InputConfig::default().with_pull(Pull::Up));
     let next_btn = Input::new(gpio38, InputConfig::default().with_pull(Pull::Up));
 
-    let SCALE:u32 = 2;
+    let SCALE: u32 = 2;
     // ── Build scene ───────────────────────────────────────────────────────────
     // let mut scene = Scene::new_with_bounds(Bounds::new(0, 0, 960, 540));
-    let mut scene = Scene::new_with_scale(Bounds::new(0, 0, (960 / SCALE) as i32, (540 / SCALE) as i32), SCALE);
+    let mut scene = Scene::new_with_scale(
+        Bounds::new(0, 0, (960 / SCALE) as i32, (540 / SCALE) as i32),
+        SCALE,
+    );
     let panel1 = ViewId::new("panel1");
     let pan = make_panel(&panel1)
         .with_layout(Some(layout_vbox))
         .with_visible(true);
-    let l1 = make_label("l1","The first label");
+    let l1 = make_label("l1", "The first label");
     scene.add_view_to_parent(l1, &panel1);
     // let b1 = make_full_button(&ViewId::new("b1"), "The first button","toggle",false);
     // scene.add_view_to_parent(b1, &pan.name);
-    let b2 = make_full_button(&ViewId::new("b2"), "The second button","toggle2",false);
+    let b2 = make_full_button(&ViewId::new("b2"), "The second button", "toggle2", false);
     // scene.add_view_to_parent(b2, &pan.name);
     //
-    let t1 = make_toggle_button(&ViewId::new("toggle1"),"Toggle");
+    let t1 = make_toggle_button(&ViewId::new("toggle1"), "Toggle");
     scene.add_view_to_parent(t1, &pan.name);
 
     scene.add_view_to_root(pan);
@@ -215,7 +235,10 @@ fn main() -> ! {
 
         // Touch input → hit-test the scene, dispatch Tap event
         if let Some((tx, ty)) = display.read_touch(&mut gt911) {
-            let pt = iris_ui::geom::Point::new(((tx as u32) / SCALE) as i32,((ty as u32)/SCALE) as i32);
+            let pt = iris_ui::geom::Point::new(
+                ((tx as u32) / SCALE) as i32,
+                ((ty as u32) / SCALE) as i32,
+            );
             esp_println::println!("[iris] touch {}", pt);
 
             if let Some(result) = click_at(&mut scene, &empty_handlers, pt) {
@@ -234,19 +257,25 @@ fn main() -> ! {
                 };
                 esp_println::println!("[iris] partial flush {:?}", clip_rect);
                 render(&mut display, &mut scene, SCALE);
-                display.flush_clip(DrawMode::WhiteOnBlack, clip_rect).unwrap();
+                display
+                    .flush_clip(DrawMode::WhiteOnBlack, clip_rect)
+                    .unwrap();
                 // mark_dirty_all sets dirty=true; then override dirty_rect to restore
                 // the precise clip for the second (BlackOnWhite) pass.
                 scene.mark_dirty_all();
                 scene.dirty_rect = dirty;
                 render(&mut display, &mut scene, SCALE);
-                display.flush_clip(DrawMode::BlackOnWhite, clip_rect).unwrap();
+                display
+                    .flush_clip(DrawMode::BlackOnWhite, clip_rect)
+                    .unwrap();
             }
 
             // Wait for finger lift before continuing
             loop {
                 delay.delay_millis(20);
-                if display.read_touch(&mut gt911).is_none() { break; }
+                if display.read_touch(&mut gt911).is_none() {
+                    break;
+                }
             }
         }
 

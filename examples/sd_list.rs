@@ -30,10 +30,12 @@ struct DummyTimesource;
 impl TimeSource for DummyTimesource {
     fn get_timestamp(&self) -> Timestamp {
         Timestamp {
-            year_since_1970:  0,
+            year_since_1970: 0,
             zero_indexed_month: 0,
-            zero_indexed_day:   0,
-            hours: 0, minutes: 0, seconds: 0,
+            zero_indexed_day: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
         }
     }
 }
@@ -95,7 +97,7 @@ fn main() -> ! {
 
     // SPI2: shared bus with LoRa, but each peripheral has its own CS.
     // SD card CS is GPIO12; LoRa CS (GPIO46) is left floating high.
-    let cs  = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
+    let cs = Output::new(peripherals.GPIO12, Level::High, OutputConfig::default());
     let spi = Spi::new(peripherals.SPI2, SpiConfig::default())
         .expect("SPI2 init")
         .with_sck(peripherals.GPIO14)
@@ -105,7 +107,7 @@ fn main() -> ! {
     // ExclusiveDevice wraps the SpiBus + CS into a SpiDevice, which is what
     // embedded-sdmmc requires.
     let spi_dev = ExclusiveDevice::new(spi, cs, Delay::new()).unwrap();
-    let sdcard  = SdCard::new(spi_dev, Delay::new());
+    let sdcard = SdCard::new(spi_dev, Delay::new());
 
     // VolumeManager with MAX_DIRS=16 so deeply nested trees don't exhaust the
     // open-directory slots (each level of recursion holds one slot).

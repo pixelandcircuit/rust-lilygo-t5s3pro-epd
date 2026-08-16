@@ -1,7 +1,6 @@
 use esp_hal::{
     gpio::Level,
-    peripherals,
-    rmt,
+    peripherals, rmt,
     rmt::{Channel, PulseCode, Tx, TxChannelCreator, TxTransaction},
     time::Rate,
     Blocking,
@@ -49,7 +48,10 @@ impl<'a> Rmt<'a> {
         wait: bool,
     ) -> Result<Option<TxTransaction<'a, 'b>>, crate::driver::Error> {
         self.ensure_channel()?;
-        let tx_channel = self.tx_channel.take().ok_or(crate::driver::Error::Unknown)?;
+        let tx_channel = self
+            .tx_channel
+            .take()
+            .ok_or(crate::driver::Error::Unknown)?;
         let tx = tx_channel
             .transmit(data)
             .map_err(|(err, _)| crate::driver::Error::Rmt(err))?;
@@ -69,7 +71,9 @@ impl<'a> Rmt<'a> {
         &mut self,
         tx: TxTransaction<'a, 'b>,
     ) -> Result<(), crate::driver::Error> {
-        let channel = tx.wait().map_err(|(err, _)| crate::driver::Error::Rmt(err))?;
+        let channel = tx
+            .wait()
+            .map_err(|(err, _)| crate::driver::Error::Rmt(err))?;
         self.tx_channel = Some(channel);
         Ok(())
     }

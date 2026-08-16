@@ -28,7 +28,11 @@ pub struct Gt911 {
 
 impl Gt911 {
     pub fn new(addr: u8) -> Self {
-        Self { addr, x_max: 0, y_max: 0 }
+        Self {
+            addr,
+            x_max: 0,
+            y_max: 0,
+        }
     }
 
     /// Write a valid configuration so the GT911 starts scanning.

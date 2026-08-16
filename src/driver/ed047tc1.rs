@@ -20,26 +20,26 @@ const PCA9555_ADDR: u8 = 0x20;
 const TPS65185_ADDR: u8 = 0x68;
 
 // ── PCA9555 register map ──────────────────────────────────────────────────────
-const PCA_REG_INPUT1:  u8 = 0x01; // port-1 input (read)
+const PCA_REG_INPUT1: u8 = 0x01; // port-1 input (read)
 const PCA_REG_OUTPUT0: u8 = 0x02; // port-0 output
 const PCA_REG_OUTPUT1: u8 = 0x03; // port-1 output
 const PCA_REG_CONFIG0: u8 = 0x06; // port-0 direction  (0=output)
 const PCA_REG_CONFIG1: u8 = 0x07; // port-1 direction
 
 // ── PCA9555 port-1 bit masks ──────────────────────────────────────────────────
-const PCA_OE:        u8 = 0x01; // bit 0 – display output-enable
-const PCA_MODE:      u8 = 0x02; // bit 1 – display mode
-// bit 2 (STV) is an input on this board and not driven here
-const PCA_PWRUP:     u8 = 0x08; // bit 3 – TPS65185 power-up
+const PCA_OE: u8 = 0x01; // bit 0 – display output-enable
+const PCA_MODE: u8 = 0x02; // bit 1 – display mode
+                           // bit 2 (STV) is an input on this board and not driven here
+const PCA_PWRUP: u8 = 0x08; // bit 3 – TPS65185 power-up
 const PCA_VCOM_CTRL: u8 = 0x10; // bit 4 – TPS65185 VCOM control
-const PCA_WAKEUP:    u8 = 0x20; // bit 5 – TPS65185 wakeup
-const PCA_PWRGOOD:   u8 = 0x40; // bit 6 – power-good flag (input)
+const PCA_WAKEUP: u8 = 0x20; // bit 5 – TPS65185 wakeup
+const PCA_PWRGOOD: u8 = 0x40; // bit 6 – power-good flag (input)
 
 // ── TPS65185 register map ─────────────────────────────────────────────────────
 const TPS_REG_ENABLE: u8 = 0x01; // enable all rails (write 0x3F)
-const TPS_REG_VCOM1:  u8 = 0x03; // VCOM voltage LSB
-const TPS_REG_VCOM2:  u8 = 0x04; // VCOM voltage MSB
-const TPS_REG_PG:     u8 = 0x0F; // power-good status
+const TPS_REG_VCOM1: u8 = 0x03; // VCOM voltage LSB
+const TPS_REG_VCOM2: u8 = 0x04; // VCOM voltage MSB
+const TPS_REG_PG: u8 = 0x0F; // power-good status
 
 const VCOM_MV: u16 = 1600;
 
@@ -75,10 +75,10 @@ pub struct PinConfig<'a> {
     pub data6: peripherals::GPIO18<'a>,
     pub data7: peripherals::GPIO8<'a>,
     // LCD control
-    pub ckh: peripherals::GPIO4<'a>,   // CKH – horizontal pixel clock → I8080 WRX
-    pub sth: peripherals::GPIO41<'a>,  // STH – start horizontal       → I8080 DC
-    pub leh: peripherals::GPIO42<'a>,  // LEH – latch-enable horizontal (GPIO)
-    pub stv: peripherals::GPIO45<'a>,  // STV – start vertical          (GPIO)
+    pub ckh: peripherals::GPIO4<'a>, // CKH – horizontal pixel clock → I8080 WRX
+    pub sth: peripherals::GPIO41<'a>, // STH – start horizontal       → I8080 DC
+    pub leh: peripherals::GPIO42<'a>, // LEH – latch-enable horizontal (GPIO)
+    pub stv: peripherals::GPIO45<'a>, // STV – start vertical          (GPIO)
     // CKV row-clock (RMT)
     pub ckv: peripherals::GPIO48<'a>,
     // I2C bus shared by PCA9555 + TPS65185
@@ -89,20 +89,20 @@ pub struct PinConfig<'a> {
 // ── Main driver struct ────────────────────────────────────────────────────────
 
 pub(crate) struct ED047TC1<'a> {
-    i8080:    Option<i8080::I8080<'a, Blocking>>,
-    i2c:      I2c<'a, Blocking>,
-    leh:      Output<'a>,
-    stv:      Output<'a>,
-    rmt:      rmt::Rmt<'a>,
-    dma_buf:  Option<DmaTxBuf>,
+    i8080: Option<i8080::I8080<'a, Blocking>>,
+    i2c: I2c<'a, Blocking>,
+    leh: Output<'a>,
+    stv: Output<'a>,
+    rmt: rmt::Rmt<'a>,
+    dma_buf: Option<DmaTxBuf>,
     pca_out1: u8,
 }
 
 impl<'a> ED047TC1<'a> {
     pub(crate) fn new(
-        pins:       PinConfig<'a>,
-        dma:        peripherals::DMA_CH0<'a>,
-        lcd_cam:    peripherals::LCD_CAM<'a>,
+        pins: PinConfig<'a>,
+        dma: peripherals::DMA_CH0<'a>,
+        lcd_cam: peripherals::LCD_CAM<'a>,
         rmt_periph: peripherals::RMT<'a>,
         i2c_periph: peripherals::I2C0<'a>,
     ) -> crate::driver::Result<Self> {
@@ -115,21 +115,20 @@ impl<'a> ED047TC1<'a> {
         // PCA9555 init:
         //   port 0 – all outputs, driven high (board-level signals)
         //   port 1 – bits 2/6/7 as inputs, rest outputs, driven low
-        pca_write(&mut i2c, PCA_REG_CONFIG0, 0x00);  // port 0: all output
-        pca_write(&mut i2c, PCA_REG_CONFIG1, 0xC4);  // port 1: bits 2,6,7 = input
-        pca_write(&mut i2c, PCA_REG_OUTPUT0, 0xFF);  // port 0: all high
-        pca_write(&mut i2c, PCA_REG_OUTPUT1, 0x00);  // port 1: all low
+        pca_write(&mut i2c, PCA_REG_CONFIG0, 0x00); // port 0: all output
+        pca_write(&mut i2c, PCA_REG_CONFIG1, 0xC4); // port 1: bits 2,6,7 = input
+        pca_write(&mut i2c, PCA_REG_OUTPUT0, 0xFF); // port 0: all high
+        pca_write(&mut i2c, PCA_REG_OUTPUT1, 0x00); // port 1: all low
 
         // ── Direct GPIO ───────────────────────────────────────────────────────
-        let leh = Output::new(pins.leh, Level::Low,  OutputConfig::default());
+        let leh = Output::new(pins.leh, Level::Low, OutputConfig::default());
         let stv = Output::new(pins.stv, Level::High, OutputConfig::default());
 
         // ── LCD I8080 ─────────────────────────────────────────────────────────
         let lcd_cam = LcdCam::new(lcd_cam);
         let (_, _, tx_buffer, tx_descriptors) = dma_buffers!(0, DMA_BUFFER_SIZE);
         let dma_buf = Some(
-            DmaTxBuf::new(tx_descriptors, tx_buffer)
-                .map_err(crate::driver::Error::DmaBuffer)?,
+            DmaTxBuf::new(tx_descriptors, tx_buffer).map_err(crate::driver::Error::DmaBuffer)?,
         );
 
         let i8080_config = i8080::Config::default()
@@ -142,8 +141,8 @@ impl<'a> ED047TC1<'a> {
         let i8080 = Some(
             i8080::I8080::new(lcd_cam.lcd, dma, i8080_config)
                 .expect("to create i8080 device")
-                .with_dc(pins.sth)      // STH (GPIO41) → start-horizontal pulse via DC
-                .with_wrx(pins.ckh)     // CKH (GPIO4)  → pixel clock
+                .with_dc(pins.sth) // STH (GPIO41) → start-horizontal pulse via DC
+                .with_wrx(pins.ckh) // CKH (GPIO4)  → pixel clock
                 .with_data0(pins.data0) // D0  (GPIO5)
                 .with_data1(pins.data1) // D1  (GPIO6)
                 .with_data2(pins.data2) // D2  (GPIO7)
@@ -151,7 +150,7 @@ impl<'a> ED047TC1<'a> {
                 .with_data4(pins.data4) // D4  (GPIO16)
                 .with_data5(pins.data5) // D5  (GPIO17)
                 .with_data6(pins.data6) // D6  (GPIO18)
-                .with_data7(pins.data7) // D7  (GPIO8)
+                .with_data7(pins.data7), // D7  (GPIO8)
         );
 
         Ok(ED047TC1 {

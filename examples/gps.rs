@@ -26,7 +26,7 @@ use esp_println::println;
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const PCA9555_ADDR:    u8 = 0x20;
+const PCA9555_ADDR: u8 = 0x20;
 const PCA_REG_CONFIG0: u8 = 0x06; // port-0 direction register  (0 = output)
 const PCA_REG_OUTPUT0: u8 = 0x02; // port-0 output latch
 
@@ -58,7 +58,7 @@ fn main() -> ! {
     println!("[gps] listening for NMEA — fix may take 30–60 s outdoors...");
 
     let mut line = [0u8; 128];
-    let mut pos  = 0usize;
+    let mut pos = 0usize;
     let mut byte = [0u8; 1];
 
     loop {
@@ -94,14 +94,14 @@ fn print_gga(sentence: &str) {
     let mut f = sentence.splitn(15, ',');
     let _tag = f.next();
     let time = f.next().unwrap_or("");
-    let lat  = f.next().unwrap_or("");
-    let ns   = f.next().unwrap_or("");
-    let lon  = f.next().unwrap_or("");
-    let ew   = f.next().unwrap_or("");
-    let fix  = f.next().unwrap_or("0");
+    let lat = f.next().unwrap_or("");
+    let ns = f.next().unwrap_or("");
+    let lon = f.next().unwrap_or("");
+    let ew = f.next().unwrap_or("");
+    let fix = f.next().unwrap_or("0");
     let sats = f.next().unwrap_or("0");
     let hdop = f.next().unwrap_or("");
-    let alt  = f.next().unwrap_or("");
+    let alt = f.next().unwrap_or("");
 
     if fix == "0" || lat.is_empty() {
         println!("[gps] no fix (sats tracked: {})", sats);
@@ -128,6 +128,6 @@ fn nmea_to_decimal(value: &str, dir: &str) -> Option<f64> {
     let dd = degrees + minutes / 60.0;
     match dir {
         "S" | "W" => Some(-dd),
-        _         => Some(dd),
+        _ => Some(dd),
     }
 }

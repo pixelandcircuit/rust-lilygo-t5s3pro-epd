@@ -16,8 +16,8 @@ use embedded_graphics::{
     image::{Image, ImageRaw},
     mono_font::{
         ascii::{
-            FONT_10X20, FONT_4X6, FONT_5X7, FONT_6X9, FONT_7X13, FONT_7X13_BOLD,
-            FONT_7X13_ITALIC, FONT_9X18, FONT_9X18_BOLD,
+            FONT_10X20, FONT_4X6, FONT_5X7, FONT_6X9, FONT_7X13, FONT_7X13_BOLD, FONT_7X13_ITALIC,
+            FONT_9X18, FONT_9X18_BOLD,
         },
         MonoTextStyle, MonoTextStyleBuilder,
     },
@@ -48,7 +48,10 @@ struct Buf<const N: usize> {
 
 impl<const N: usize> Buf<N> {
     fn new() -> Self {
-        Self { data: [0u8; N], len: 0 }
+        Self {
+            data: [0u8; N],
+            len: 0,
+        }
     }
 
     fn push_str(&mut self, s: &str) {
@@ -100,9 +103,14 @@ fn draw_title(display: &mut Display) {
         .draw(display)
         .unwrap();
 
-    Text::with_alignment("Graphics Test", Point::new(480, 80), large, Alignment::Center)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        "Graphics Test",
+        Point::new(480, 80),
+        large,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
 
     Line::new(Point::new(80, 100), Point::new(880, 100))
         .into_styled(PrimitiveStyle::with_stroke(Gray4::BLACK, 1))
@@ -188,8 +196,14 @@ fn draw_shapes(display: &mut Display) {
     let cy = 155i32;
     // (dx, dy) at 45° increments, length ≈ 120 (diagonal = 120*0.707 ≈ 85)
     let dirs: [(i32, i32); 8] = [
-        (120, 0), (85, 85), (0, 120), (-85, 85),
-        (-120, 0), (-85, -85), (0, -120), (85, -85),
+        (120, 0),
+        (85, 85),
+        (0, 120),
+        (-85, 85),
+        (-120, 0),
+        (-85, -85),
+        (0, -120),
+        (85, -85),
     ];
     for (dx, dy) in dirs {
         Line::new(Point::new(cx, cy), Point::new(cx + dx, cy + dy))
@@ -237,9 +251,18 @@ fn draw_shapes(display: &mut Display) {
     let tri_a = Point::new(480, 310);
     let tri_b = Point::new(360, 520);
     let tri_c = Point::new(600, 520);
-    Line::new(tri_a, tri_b).into_styled(s4).draw(display).unwrap();
-    Line::new(tri_b, tri_c).into_styled(s4).draw(display).unwrap();
-    Line::new(tri_c, tri_a).into_styled(s4).draw(display).unwrap();
+    Line::new(tri_a, tri_b)
+        .into_styled(s4)
+        .draw(display)
+        .unwrap();
+    Line::new(tri_b, tri_c)
+        .into_styled(s4)
+        .draw(display)
+        .unwrap();
+    Line::new(tri_c, tri_a)
+        .into_styled(s4)
+        .draw(display)
+        .unwrap();
 
     // ── Grey-level horizontal lines (bottom-right) ────────────────────────────
     let grey_levels: [u8; 8] = [0, 2, 4, 6, 8, 10, 12, 14];
@@ -284,24 +307,28 @@ fn draw_typography(display: &mut Display) {
         };
     }
 
-    font_line!(FONT_4X6,        "FONT_4X6        ", 65,  display);
-    font_line!(FONT_5X7,        "FONT_5X7        ", 82,  display);
-    font_line!(FONT_6X9,        "FONT_6X9        ", 102, display);
-    font_line!(FONT_7X13,       "FONT_7X13       ", 124, display);
-    font_line!(FONT_7X13_BOLD,  "FONT_7X13_BOLD  ", 148, display);
-    font_line!(FONT_7X13_ITALIC,"FONT_7X13_ITALIC", 172, display);
-    font_line!(FONT_9X18,       "FONT_9X18       ", 200, display);
-    font_line!(FONT_9X18_BOLD,  "FONT_9X18_BOLD  ", 230, display);
-    font_line!(FONT_10X20,      "FONT_10X20      ", 262, display);
+    font_line!(FONT_4X6, "FONT_4X6        ", 65, display);
+    font_line!(FONT_5X7, "FONT_5X7        ", 82, display);
+    font_line!(FONT_6X9, "FONT_6X9        ", 102, display);
+    font_line!(FONT_7X13, "FONT_7X13       ", 124, display);
+    font_line!(FONT_7X13_BOLD, "FONT_7X13_BOLD  ", 148, display);
+    font_line!(FONT_7X13_ITALIC, "FONT_7X13_ITALIC", 172, display);
+    font_line!(FONT_9X18, "FONT_9X18       ", 200, display);
+    font_line!(FONT_9X18_BOLD, "FONT_9X18_BOLD  ", 230, display);
+    font_line!(FONT_10X20, "FONT_10X20      ", 262, display);
 
     // Decorations
     Line::new(Point::new(40, 295), Point::new(920, 295))
         .into_styled(PrimitiveStyle::with_stroke(Gray4::BLACK, 1))
         .draw(display)
         .unwrap();
-    Text::new("Decorations:", Point::new(40, 310), MonoTextStyle::new(&FONT_7X13, Gray4::BLACK))
-        .draw(display)
-        .unwrap();
+    Text::new(
+        "Decorations:",
+        Point::new(40, 310),
+        MonoTextStyle::new(&FONT_7X13, Gray4::BLACK),
+    )
+    .draw(display)
+    .unwrap();
 
     let underline_style = MonoTextStyleBuilder::new()
         .font(&FONT_9X18)
@@ -326,19 +353,38 @@ fn draw_typography(display: &mut Display) {
         .into_styled(PrimitiveStyle::with_stroke(Gray4::BLACK, 1))
         .draw(display)
         .unwrap();
-    Text::new("Alignment:", Point::new(40, 430), MonoTextStyle::new(&FONT_7X13, Gray4::BLACK))
-        .draw(display)
-        .unwrap();
+    Text::new(
+        "Alignment:",
+        Point::new(40, 430),
+        MonoTextStyle::new(&FONT_7X13, Gray4::BLACK),
+    )
+    .draw(display)
+    .unwrap();
     let align_style = MonoTextStyle::new(&FONT_9X18, Gray4::BLACK);
-    Text::with_alignment("Left-aligned", Point::new(40, 470), align_style, Alignment::Left)
-        .draw(display)
-        .unwrap();
-    Text::with_alignment("Centered", Point::new(480, 470), align_style, Alignment::Center)
-        .draw(display)
-        .unwrap();
-    Text::with_alignment("Right-aligned", Point::new(920, 470), align_style, Alignment::Right)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        "Left-aligned",
+        Point::new(40, 470),
+        align_style,
+        Alignment::Left,
+    )
+    .draw(display)
+    .unwrap();
+    Text::with_alignment(
+        "Centered",
+        Point::new(480, 470),
+        align_style,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
+    Text::with_alignment(
+        "Right-aligned",
+        Point::new(920, 470),
+        align_style,
+        Alignment::Right,
+    )
+    .draw(display)
+    .unwrap();
 
     // Vertical guide line for alignment
     Line::new(Point::new(480, 455), Point::new(480, 490))
@@ -387,9 +433,9 @@ fn draw_grayscale(display: &mut Display) {
 
         // Label on the right
         let luma_label = match luma {
-            0  => "black",
+            0 => "black",
             15 => "white",
-            _  => "",
+            _ => "",
         };
         if !luma_label.is_empty() {
             Text::new(luma_label, Point::new(890, y + 16), label)
@@ -408,9 +454,7 @@ fn draw_grayscale(display: &mut Display) {
     .unwrap();
 
     let raw = ImageRaw::<Gray4, BigEndian>::new(STRIP_DATA, 960);
-    Image::new(&raw, Point::new(0, 490))
-        .draw(display)
-        .unwrap();
+    Image::new(&raw, Point::new(0, 490)).draw(display).unwrap();
 }
 
 // ── Screen 4: Image test card ─────────────────────────────────────────────────
@@ -419,15 +463,17 @@ fn draw_image(display: &mut Display) {
     let heading = MonoTextStyle::new(&FONT_10X20, Gray4::BLACK);
     let label = MonoTextStyle::new(&FONT_6X9, Gray4::BLACK);
 
-    Text::new("ImageRaw<Gray4> — 960x270 test card", Point::new(40, 22), heading)
-        .draw(display)
-        .unwrap();
+    Text::new(
+        "ImageRaw<Gray4> — 960x270 test card",
+        Point::new(40, 22),
+        heading,
+    )
+    .draw(display)
+    .unwrap();
 
     // Draw the 960×270 card centred vertically (y=135 puts it in rows 135-404)
     let raw = ImageRaw::<Gray4, BigEndian>::new(CARD_DATA, 960);
-    Image::new(&raw, Point::new(0, 135))
-        .draw(display)
-        .unwrap();
+    Image::new(&raw, Point::new(0, 135)).draw(display).unwrap();
 
     // Quadrant labels (drawn on top of image — use mid-gray for visibility)
     let mid = MonoTextStyle::new(&FONT_7X13, Gray4::new(8));
@@ -475,9 +521,14 @@ fn run_animation(display: &mut Display, button: &Input, delay: &Delay) -> (u64, 
     // fill() marks all 540 rows dirty → flush sends every row
     display.fill(0x0F).unwrap();
 
-    Text::with_alignment("Animation & Partial Refresh", Point::new(480, 40), large, Alignment::Center)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        "Animation & Partial Refresh",
+        Point::new(480, 40),
+        large,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
     Text::with_alignment(
         "The ball moves in a 120-row band. Only those rows are flushed each frame.",
         Point::new(480, 70),
@@ -486,9 +537,13 @@ fn run_animation(display: &mut Display, button: &Input, delay: &Delay) -> (u64, 
     )
     .draw(display)
     .unwrap();
-    Text::new("Measuring full-screen flush (all 540 rows)...", Point::new(40, 100), small)
-        .draw(display)
-        .unwrap();
+    Text::new(
+        "Measuring full-screen flush (all 540 rows)...",
+        Point::new(40, 100),
+        small,
+    )
+    .draw(display)
+    .unwrap();
 
     println!("Measuring full flush...");
     let t0 = Instant::now();
@@ -508,9 +563,14 @@ fn run_animation(display: &mut Display, button: &Input, delay: &Delay) -> (u64, 
         .into_styled(PrimitiveStyle::with_stroke(Gray4::BLACK, 2))
         .draw(display)
         .unwrap();
-    Text::with_alignment("Animation & Partial Refresh", Point::new(480, 40), large, Alignment::Center)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        "Animation & Partial Refresh",
+        Point::new(480, 40),
+        large,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
     Text::with_alignment(
         "Ball moves across screen (8 frames). Only the ~80 rows it touches are flushed.",
         Point::new(480, 70),
@@ -572,21 +632,35 @@ fn run_animation(display: &mut Display, button: &Input, delay: &Delay) -> (u64, 
         line1.push_str("ms   |   Partial (~80 rows): ");
         line1.push_u64(partial_avg_ms);
         line1.push_str("ms avg");
-        Text::with_alignment(line1.as_str(), Point::new(480, 390), small, Alignment::Center)
-            .draw(display)
-            .unwrap();
+        Text::with_alignment(
+            line1.as_str(),
+            Point::new(480, 390),
+            small,
+            Alignment::Center,
+        )
+        .draw(display)
+        .unwrap();
     }
     {
-        let speedup_x10 = if partial_avg_ms > 0 { full_flush_ms * 10 / partial_avg_ms } else { 0 };
+        let speedup_x10 = if partial_avg_ms > 0 {
+            full_flush_ms * 10 / partial_avg_ms
+        } else {
+            0
+        };
         let mut line2 = Buf::<64>::new();
         line2.push_str("Speedup: ");
         line2.push_u64(speedup_x10 / 10);
         line2.push_str(".");
         line2.push_u64(speedup_x10 % 10);
         line2.push_str("x faster  |  ~80/540 = ~15% of rows updated");
-        Text::with_alignment(line2.as_str(), Point::new(480, 420), small, Alignment::Center)
-            .draw(display)
-            .unwrap();
+        Text::with_alignment(
+            line2.as_str(),
+            Point::new(480, 420),
+            small,
+            Alignment::Center,
+        )
+        .draw(display)
+        .unwrap();
     }
     Text::with_alignment(
         "Note: ghosting is expected — the waveform does not actively drive pixels to white.",
@@ -616,9 +690,14 @@ fn draw_timing(display: &mut Display, clear_ms: u64, full_ms: u64, partial_ms: u
         .draw(display)
         .unwrap();
 
-    Text::with_alignment("Refresh Timing Summary", Point::new(480, 60), heading, Alignment::Center)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        "Refresh Timing Summary",
+        Point::new(480, 60),
+        heading,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
 
     Line::new(Point::new(40, 78), Point::new(920, 78))
         .into_styled(PrimitiveStyle::with_stroke(Gray4::BLACK, 1))
@@ -626,9 +705,21 @@ fn draw_timing(display: &mut Display, clear_ms: u64, full_ms: u64, partial_ms: u
         .unwrap();
 
     let rows: [(&str, u64, &str); 3] = [
-        ("Hardware clear (540 rows):", clear_ms, "ms   — drives all pixels black then white x4"),
-        ("Full flush     (540 rows):", full_ms,  "ms   — 15-frame waveform, all rows sent"),
-        ("Partial flush  (120 rows):", partial_ms, "ms   — 15-frame waveform, 22% of rows (avg)"),
+        (
+            "Hardware clear (540 rows):",
+            clear_ms,
+            "ms   — drives all pixels black then white x4",
+        ),
+        (
+            "Full flush     (540 rows):",
+            full_ms,
+            "ms   — 15-frame waveform, all rows sent",
+        ),
+        (
+            "Partial flush  (120 rows):",
+            partial_ms,
+            "ms   — 15-frame waveform, 22% of rows (avg)",
+        ),
     ];
 
     for (i, (label, val, suffix)) in rows.iter().enumerate() {
@@ -652,16 +743,25 @@ fn draw_timing(display: &mut Display, clear_ms: u64, full_ms: u64, partial_ms: u
         .unwrap();
 
     // Speedup ratio
-    let speedup_x10 = if partial_ms > 0 { full_ms * 10 / partial_ms } else { 0 };
+    let speedup_x10 = if partial_ms > 0 {
+        full_ms * 10 / partial_ms
+    } else {
+        0
+    };
     let mut speed_line = Buf::<64>::new();
     speed_line.push_str("Partial refresh is ");
     speed_line.push_u64(speedup_x10 / 10);
     speed_line.push_str(".");
     speed_line.push_u64(speedup_x10 % 10);
     speed_line.push_str("x faster than a full flush.");
-    Text::with_alignment(speed_line.as_str(), Point::new(480, 410), heading, Alignment::Center)
-        .draw(display)
-        .unwrap();
+    Text::with_alignment(
+        speed_line.as_str(),
+        Point::new(480, 410),
+        heading,
+        Alignment::Center,
+    )
+    .draw(display)
+    .unwrap();
 
     Text::with_alignment(
         "Rows skipped: 420 of 540 per waveform frame (22% updated, 78% skipped via CKV pulse).",
@@ -688,8 +788,7 @@ fn draw_timing(display: &mut Display, clear_ms: u64, full_ms: u64, partial_ms: u
 fn main() -> ! {
     esp_println::logger::init_logger_from_env();
 
-    let config = esp_hal::Config::default()
-        .with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
+    let config = esp_hal::Config::default().with_cpu_clock(esp_hal::clock::CpuClock::_240MHz);
     let peripherals = esp_hal::init(config);
 
     let psram_config = esp_hal::psram::PsramConfig {
@@ -762,15 +861,17 @@ fn main() -> ! {
 
     // ── Screen 5: Animation (also measures full + partial flush time) ─────────
     display.clear().unwrap();
-    let (clear_ms, full_flush_ms, partial_avg_ms) =
-        run_animation(&mut display, &button, &delay);
+    let (clear_ms, full_flush_ms, partial_avg_ms) = run_animation(&mut display, &button, &delay);
 
     // ── Screen 6: Timing summary ──────────────────────────────────────────────
     display.clear().unwrap();
     draw_timing(&mut display, clear_ms, full_flush_ms, partial_avg_ms);
     println!("Flushing timing summary...");
     display.flush(DrawMode::BlackOnWhite).unwrap();
-    println!("Done. clear={}ms full={}ms partial={}ms", clear_ms, full_flush_ms, partial_avg_ms);
+    println!(
+        "Done. clear={}ms full={}ms partial={}ms",
+        clear_ms, full_flush_ms, partial_avg_ms
+    );
     wait_for_button(&button, &delay);
 
     loop {}

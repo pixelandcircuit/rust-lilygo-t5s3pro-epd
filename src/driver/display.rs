@@ -190,7 +190,12 @@ impl<'a> Display<'a> {
 
     /// Write a valid GT911 configuration block so it starts scanning.
     /// Call this if the GT911 was never configured (config version = 0x00).
-    pub fn configure_touch(&mut self, gt911: &mut crate::driver::gt911::Gt911, x_max: u16, y_max: u16) {
+    pub fn configure_touch(
+        &mut self,
+        gt911: &mut crate::driver::gt911::Gt911,
+        x_max: u16,
+        y_max: u16,
+    ) {
         gt911.configure(self.epd.i2c(), x_max, y_max);
     }
 
@@ -424,10 +429,7 @@ fn prepare_dma_buffer(line_data: &[u8], conversion_lut: &[u8]) -> Vec<u8> {
     // The LUT produces LSB-first (bits 0-1 = leftmost), so reverse the 2-bit pair order.
     for byte in epd_input.iter_mut() {
         let b = *byte;
-        *byte = ((b & 0x03) << 6)
-              | ((b & 0x0C) << 2)
-              | ((b & 0x30) >> 2)
-              | ((b & 0xC0) >> 6);
+        *byte = ((b & 0x03) << 6) | ((b & 0x0C) << 2) | ((b & 0x30) >> 2) | ((b & 0xC0) >> 6);
     }
 
     epd_input
