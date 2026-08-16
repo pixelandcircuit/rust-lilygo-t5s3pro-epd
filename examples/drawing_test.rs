@@ -113,5 +113,5 @@ fn main() -> ! {
 }
 
 fn fun(theta: f32) -> (f32, f32) {
-    ((theta*2.051f32).sin(), (theta*1f32).cos())
+    ((theta*2.051f32).sin(), (theta*1.1f32).cos())
 }
