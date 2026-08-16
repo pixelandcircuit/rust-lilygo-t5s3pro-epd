@@ -477,14 +477,28 @@ fn json_raw_array_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let mut in_str = false;
     let mut escape = false;
     for (i, c) in rest.char_indices() {
-        if escape { escape = false; continue; }
-        if c == '\\' && in_str { escape = true; continue; }
-        if c == '"' { in_str = !in_str; continue; }
-        if in_str { continue; }
-        if c == '[' { depth += 1; }
-        else if c == ']' {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' && in_str {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if c == '[' {
+            depth += 1;
+        } else if c == ']' {
             depth -= 1;
-            if depth == 0 { return Some(&rest[..=i]); }
+            if depth == 0 {
+                return Some(&rest[..=i]);
+            }
         }
     }
     None
@@ -498,14 +512,28 @@ fn json_raw_object_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
     let mut in_str = false;
     let mut escape = false;
     for (i, c) in rest.char_indices() {
-        if escape { escape = false; continue; }
-        if c == '\\' && in_str { escape = true; continue; }
-        if c == '"' { in_str = !in_str; continue; }
-        if in_str { continue; }
-        if c == '{' { depth += 1; }
-        else if c == '}' {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' && in_str {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
             depth -= 1;
-            if depth == 0 { return Some(&rest[..=i]); }
+            if depth == 0 {
+                return Some(&rest[..=i]);
+            }
         }
     }
     None
@@ -523,16 +551,44 @@ fn json_u32_field(json: &str, key: &str) -> Option<u32> {
 // ── Protocol messages ─────────────────────────────────────────────────────────
 
 enum InMsg<'a> {
-    Hello { request_id: u32 },
-    GetSchema { request_id: u32 },
-    GetValue { request_id: u32, path: &'a str },
-    GetScreenshot { request_id: u32 },
-    TriggerLog { request_id: u32 },
-    GetCommands { request_id: u32 },
-    InvokeCommand { request_id: u32, name: &'a str, args_json: &'a str },
-    SetValue { request_id: u32, path: &'a str, value_json: &'a str },
-    SubscribeMetrics { request_id: u32, paths_json: &'a str, interval_ms: u32 },
-    UnsubscribeMetrics { request_id: u32, paths_json: &'a str },
+    Hello {
+        request_id: u32,
+    },
+    GetSchema {
+        request_id: u32,
+    },
+    GetValue {
+        request_id: u32,
+        path: &'a str,
+    },
+    GetScreenshot {
+        request_id: u32,
+    },
+    TriggerLog {
+        request_id: u32,
+    },
+    GetCommands {
+        request_id: u32,
+    },
+    InvokeCommand {
+        request_id: u32,
+        name: &'a str,
+        args_json: &'a str,
+    },
+    SetValue {
+        request_id: u32,
+        path: &'a str,
+        value_json: &'a str,
+    },
+    SubscribeMetrics {
+        request_id: u32,
+        paths_json: &'a str,
+        interval_ms: u32,
+    },
+    UnsubscribeMetrics {
+        request_id: u32,
+        paths_json: &'a str,
+    },
     Unknown,
 }
 
@@ -688,7 +744,11 @@ fn slugify(s: &str) -> String {
         }
     }
     let trimmed = String::from(out.trim_end_matches('-'));
-    if trimmed.is_empty() { String::from("device") } else { trimmed }
+    if trimmed.is_empty() {
+        String::from("device")
+    } else {
+        trimmed
+    }
 }
 
 // ── mDNS / DNS-SD ─────────────────────────────────────────────────────────────
@@ -717,7 +777,9 @@ fn mdns_push_u32(buf: &mut Vec<u8>, v: u32) {
 
 fn mdns_encode_name(buf: &mut Vec<u8>, name: &str) {
     for label in name.split('.') {
-        if label.is_empty() { continue; }
+        if label.is_empty() {
+            continue;
+        }
         buf.push(label.len() as u8);
         buf.extend_from_slice(label.as_bytes());
     }
@@ -728,9 +790,9 @@ fn mdns_encode_name(buf: &mut Vec<u8>, name: &str) {
 // class = 0x8001 (IN | cache-flush bit for mDNS).
 fn mdns_rr(buf: &mut Vec<u8>, name: &str, rtype: u16, ttl: u32, rdata: &[u8]) {
     mdns_encode_name(buf, name);
-    mdns_push_u16(buf, rtype);      // TYPE
-    mdns_push_u16(buf, 0x8001);     // CLASS = IN | cache-flush
-    mdns_push_u32(buf, ttl);        // TTL
+    mdns_push_u16(buf, rtype); // TYPE
+    mdns_push_u16(buf, 0x8001); // CLASS = IN | cache-flush
+    mdns_push_u32(buf, ttl); // TTL
     mdns_push_u16(buf, rdata.len() as u16); // RDLENGTH
     buf.extend_from_slice(rdata);
 }
@@ -739,12 +801,12 @@ fn mdns_rr(buf: &mut Vec<u8>, name: &str, rtype: u16, ttl: u32, rdata: &[u8]) {
 fn build_mdns_announcement(hostname: &str, instance: &str, ip: [u8; 4]) -> Vec<u8> {
     let mut pkt = Vec::new();
     // DNS header
-    mdns_push_u16(&mut pkt, 0);      // ID = 0
+    mdns_push_u16(&mut pkt, 0); // ID = 0
     mdns_push_u16(&mut pkt, 0x8400); // Flags: QR=1 (response), AA=1 (authoritative)
-    mdns_push_u16(&mut pkt, 0);      // QDCOUNT
-    mdns_push_u16(&mut pkt, 4);      // ANCOUNT = 4 records
-    mdns_push_u16(&mut pkt, 0);      // NSCOUNT
-    mdns_push_u16(&mut pkt, 0);      // ARCOUNT
+    mdns_push_u16(&mut pkt, 0); // QDCOUNT
+    mdns_push_u16(&mut pkt, 4); // ANCOUNT = 4 records
+    mdns_push_u16(&mut pkt, 0); // NSCOUNT
+    mdns_push_u16(&mut pkt, 0); // ARCOUNT
 
     let svc_type = "_embedded-inspect._tcp.local";
     let full_instance = format!("{}.{}", instance, svc_type);
@@ -759,8 +821,8 @@ fn build_mdns_announcement(hostname: &str, instance: &str, ip: [u8; 4]) -> Vec<u
     // SRV: full_instance → hostname.local:PORT  (TTL 120 s)
     {
         let mut rdata = Vec::new();
-        mdns_push_u16(&mut rdata, 0);    // Priority
-        mdns_push_u16(&mut rdata, 0);    // Weight
+        mdns_push_u16(&mut rdata, 0); // Priority
+        mdns_push_u16(&mut rdata, 0); // Weight
         mdns_push_u16(&mut rdata, PORT); // Port
         mdns_encode_name(&mut rdata, &hostname_local);
         mdns_rr(&mut pkt, &full_instance, 33, 120, &rdata);
@@ -794,29 +856,43 @@ fn mdns_parse_name(pkt: &[u8], offset: &mut usize) -> Option<String> {
     let mut hops = 0usize;
 
     loop {
-        if pos >= pkt.len() { return None; }
+        if pos >= pkt.len() {
+            return None;
+        }
         let len = pkt[pos] as usize;
 
         if len & 0xC0 == 0xC0 {
             // Pointer (name compression)
-            if pos + 1 >= pkt.len() { return None; }
+            if pos + 1 >= pkt.len() {
+                return None;
+            }
             let ptr = ((len & 0x3F) << 8) | pkt[pos + 1] as usize;
-            if !jumped { *offset = pos + 2; }
+            if !jumped {
+                *offset = pos + 2;
+            }
             pos = ptr;
             jumped = true;
             hops += 1;
-            if hops > 16 { return None; } // loop guard
+            if hops > 16 {
+                return None;
+            } // loop guard
             continue;
         }
 
         if len == 0 {
-            if !jumped { *offset = pos + 1; }
+            if !jumped {
+                *offset = pos + 1;
+            }
             break;
         }
 
         pos += 1;
-        if pos + len > pkt.len() { return None; }
-        if !name.is_empty() { name.push('.'); }
+        if pos + len > pkt.len() {
+            return None;
+        }
+        if !name.is_empty() {
+            name.push('.');
+        }
         name.push_str(core::str::from_utf8(&pkt[pos..pos + len]).ok()?);
         pos += len;
     }
@@ -826,12 +902,18 @@ fn mdns_parse_name(pkt: &[u8], offset: &mut usize) -> Option<String> {
 /// Parse an mDNS query and build a response if any questions match our records.
 /// Returns `None` if the packet is not a query or nothing matches.
 fn handle_mdns_query(pkt: &[u8], hostname: &str, instance: &str, ip: [u8; 4]) -> Option<Vec<u8>> {
-    if pkt.len() < 12 { return None; }
+    if pkt.len() < 12 {
+        return None;
+    }
     let flags = u16::from_be_bytes([pkt[2], pkt[3]]);
-    if flags & 0x8000 != 0 { return None; } // Is a response, not a query — ignore
+    if flags & 0x8000 != 0 {
+        return None;
+    } // Is a response, not a query — ignore
 
     let qdcount = u16::from_be_bytes([pkt[4], pkt[5]]) as usize;
-    if qdcount == 0 { return None; }
+    if qdcount == 0 {
+        return None;
+    }
 
     let svc_type = "_embedded-inspect._tcp.local";
     let hostname_local = format!("{}.local", hostname);
@@ -842,11 +924,15 @@ fn handle_mdns_query(pkt: &[u8], hostname: &str, instance: &str, ip: [u8; 4]) ->
 
     for _ in 0..qdcount {
         let qname = mdns_parse_name(pkt, &mut offset)?;
-        if offset + 4 > pkt.len() { return None; }
+        if offset + 4 > pkt.len() {
+            return None;
+        }
         let qtype = u16::from_be_bytes([pkt[offset], pkt[offset + 1]]);
         offset += 4; // skip qtype + qclass
 
-        if qname.eq_ignore_ascii_case(&hostname_local) && (qtype == 1 || qtype == 255 || qtype == 28) {
+        if qname.eq_ignore_ascii_case(&hostname_local)
+            && (qtype == 1 || qtype == 255 || qtype == 28)
+        {
             want_a = true;
         }
         if qname.eq_ignore_ascii_case(svc_type) && (qtype == 12 || qtype == 255) {
@@ -854,7 +940,9 @@ fn handle_mdns_query(pkt: &[u8], hostname: &str, instance: &str, ip: [u8; 4]) ->
         }
     }
 
-    if !want_a && !want_ptr { return None; }
+    if !want_a && !want_ptr {
+        return None;
+    }
 
     // Build response — same structure as announcement but filtered to what was asked.
     let an_count = (want_ptr as u16) * 3 + (want_a as u16);
@@ -927,7 +1015,10 @@ fn command_param_kind_json(kind: &CommandParamKind) -> String {
         CommandParamKind::F32 => r#"{"type":"f32"}"#.into(),
         CommandParamKind::F64 => r#"{"type":"f64"}"#.into(),
         CommandParamKind::Str => r#"{"type":"str"}"#.into(),
-        CommandParamKind::Enum { type_name, variants } => {
+        CommandParamKind::Enum {
+            type_name,
+            variants,
+        } => {
             let vs: Vec<String> = variants.iter().map(|v| format!("\"{}\"", v)).collect();
             format!(
                 r#"{{"type":"enum","type_name":"{}","variants":[{}]}}"#,
@@ -939,26 +1030,41 @@ fn command_param_kind_json(kind: &CommandParamKind) -> String {
 }
 
 fn commands_response_json(rid: u32, defs: &[CommandDef]) -> String {
-    let cmds: Vec<String> = defs.iter().map(|d| {
-        let params: Vec<String> = d.params.iter().map(|p| {
-            format!(r#"{{"name":"{}","kind":{}}}"#, p.name, command_param_kind_json(&p.kind))
-        }).collect();
-        let rk = match d.return_kind {
-            CommandReturnKind::Unit => "unit",
-            CommandReturnKind::Result => "result",
-        };
-        let desc = match d.description {
-            Some(s) => format!("\"{}\"", s),
-            None => "null".into(),
-        };
-        format!(
-            r#"{{"name":"{}","description":{},"params":[{}],"return_kind":"{}"}}"#,
-            d.name, desc, params.join(","), rk
-        )
-    }).collect();
+    let cmds: Vec<String> = defs
+        .iter()
+        .map(|d| {
+            let params: Vec<String> = d
+                .params
+                .iter()
+                .map(|p| {
+                    format!(
+                        r#"{{"name":"{}","kind":{}}}"#,
+                        p.name,
+                        command_param_kind_json(&p.kind)
+                    )
+                })
+                .collect();
+            let rk = match d.return_kind {
+                CommandReturnKind::Unit => "unit",
+                CommandReturnKind::Result => "result",
+            };
+            let desc = match d.description {
+                Some(s) => format!("\"{}\"", s),
+                None => "null".into(),
+            };
+            format!(
+                r#"{{"name":"{}","description":{},"params":[{}],"return_kind":"{}"}}"#,
+                d.name,
+                desc,
+                params.join(","),
+                rk
+            )
+        })
+        .collect();
     format!(
         r#"{{"type":"CommandsResponse","request_id":{},"commands":[{}]}}"#,
-        rid, cmds.join(",")
+        rid,
+        cmds.join(",")
     )
 }
 
@@ -1028,17 +1134,25 @@ fn debug_value_to_f64(v: DebugValue<'_>) -> Option<f64> {
 fn parse_string_array(json: &str) -> Vec<String> {
     let mut result = Vec::new();
     let json = json.trim();
-    if !json.starts_with('[') { return result; }
+    if !json.starts_with('[') {
+        return result;
+    }
     let mut rest = &json[1..];
     loop {
         rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
-        if rest.is_empty() || rest.starts_with(']') { break; }
-        if !rest.starts_with('"') { break; }
+        if rest.is_empty() || rest.starts_with(']') {
+            break;
+        }
+        if !rest.starts_with('"') {
+            break;
+        }
         rest = &rest[1..];
         if let Some(end) = rest.find('"') {
             result.push(rest[..end].into());
             rest = &rest[end + 1..];
-        } else { break; }
+        } else {
+            break;
+        }
     }
     result
 }
@@ -1056,7 +1170,11 @@ fn metric_batch_json(timestamp_ms: u64, interval_ms: u32, samples: &[(String, f6
     )
 }
 
-fn subscribe_metrics_ack_json(rid: u32, effective_interval_ms: u32, active_paths: &[String]) -> String {
+fn subscribe_metrics_ack_json(
+    rid: u32,
+    effective_interval_ms: u32,
+    active_paths: &[String],
+) -> String {
     let path_jsons: Vec<String> = active_paths.iter().map(|p| format!("\"{}\"", p)).collect();
     format!(
         r#"{{"type":"SubscribeMetricsAck","request_id":{},"effective_interval_ms":{},"active_paths":[{}]}}"#,
@@ -1080,14 +1198,28 @@ fn find_matching_brace(s: &str) -> usize {
     let mut in_str = false;
     let mut escape = false;
     for (i, c) in s.char_indices() {
-        if escape { escape = false; continue; }
-        if c == '\\' && in_str { escape = true; continue; }
-        if c == '"' { in_str = !in_str; continue; }
-        if in_str { continue; }
-        if c == '{' { depth += 1; }
-        else if c == '}' {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if c == '\\' && in_str {
+            escape = true;
+            continue;
+        }
+        if c == '"' {
+            in_str = !in_str;
+            continue;
+        }
+        if in_str {
+            continue;
+        }
+        if c == '{' {
+            depth += 1;
+        } else if c == '}' {
             depth -= 1;
-            if depth == 0 { return i; }
+            if depth == 0 {
+                return i;
+            }
         }
     }
     s.len().saturating_sub(1)
@@ -1097,12 +1229,18 @@ fn parse_command_args(args_json: &str) -> Vec<CommandArg> {
     // args_json: [{"kind":"u32","value":42},{"kind":"bool","value":true},...]
     let mut result = Vec::new();
     let mut rest = args_json.trim();
-    if !rest.starts_with('[') { return result; }
+    if !rest.starts_with('[') {
+        return result;
+    }
     rest = &rest[1..];
     loop {
         rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
-        if rest.is_empty() || rest.starts_with(']') { break; }
-        if !rest.starts_with('{') { break; }
+        if rest.is_empty() || rest.starts_with(']') {
+            break;
+        }
+        if !rest.starts_with('{') {
+            break;
+        }
         let end = find_matching_brace(rest);
         let obj = &rest[..=end];
         rest = &rest[end + 1..];
@@ -1123,7 +1261,9 @@ fn parse_command_args(args_json: &str) -> Vec<CommandArg> {
             "enum" => json_str_field(obj, "value").map(|s| CommandArg::Enum(s.into())),
             _ => None,
         };
-        if let Some(a) = arg { result.push(a); }
+        if let Some(a) = arg {
+            result.push(a);
+        }
     }
     result
 }
@@ -1281,11 +1421,11 @@ async fn mdns_task(stack: Stack<'static>) {
     esp_println::println!("[mdns] hostname={}.local  instance={}", hostname, instance);
 
     // --- UDP socket setup ---
-    let mut rx_meta  = [PacketMetadata::EMPTY; 4];
-    let mut rx_buf   = [0u8; 1500];
-    let mut tx_meta  = [PacketMetadata::EMPTY; 4];
-    let mut tx_buf   = [0u8; 1500];
-    let mut socket   = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
+    let mut rx_meta = [PacketMetadata::EMPTY; 4];
+    let mut rx_buf = [0u8; 1500];
+    let mut tx_meta = [PacketMetadata::EMPTY; 4];
+    let mut tx_buf = [0u8; 1500];
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
 
     // Best-effort multicast group join (requires embassy-net/multicast feature
     // and AP forwarding multicast to the associated station).
@@ -1305,9 +1445,15 @@ async fn mdns_task(stack: Stack<'static>) {
     // Send initial announcement immediately.
     let _ = socket.send_to(&announcement, mdns_ep).await;
     ilog!(
-        LogLevel::Info, "mdns",
+        LogLevel::Info,
+        "mdns",
         "advertised {} at {}.{}.{}.{}:{} as _embedded-inspect._tcp.local",
-        hostname, oct[0], oct[1], oct[2], oct[3], PORT
+        hostname,
+        oct[0],
+        oct[1],
+        oct[2],
+        oct[3],
+        PORT
     );
 
     let mut next_announce = Instant::now() + Duration::from_secs(30);
@@ -1527,7 +1673,12 @@ async fn run_ws_session(
                 if !samples.is_empty() {
                     let json = metric_batch_json(ts, metric_interval_ms, &samples);
                     let n = ws
-                        .write(WebSocketSendMessageType::Text, true, json.as_bytes(), &mut tx_buf)
+                        .write(
+                            WebSocketSendMessageType::Text,
+                            true,
+                            json.as_bytes(),
+                            &mut tx_buf,
+                        )
                         .unwrap_or(0);
                     if n > 0 && write_all(sock, &tx_buf[..n]).await.is_err() {
                         break 'outer;
@@ -1577,7 +1728,11 @@ async fn run_ws_session(
                 Some(t) => {
                     let e = Instant::now() - t;
                     let interval = Duration::from_millis(metric_interval_ms as u64);
-                    if e >= interval { Duration::from_millis(10) } else { interval - e }
+                    if e >= interval {
+                        Duration::from_millis(10)
+                    } else {
+                        interval - e
+                    }
                 }
             }
         } else {
@@ -1630,7 +1785,11 @@ async fn run_ws_session(
                                         // After async work, break to outer loop to re-poll TCP.
                                         break 'inner;
                                     }
-                                    InMsg::InvokeCommand { request_id, name, args_json } => {
+                                    InMsg::InvokeCommand {
+                                        request_id,
+                                        name,
+                                        args_json,
+                                    } => {
                                         ilog!(
                                             LogLevel::Debug,
                                             "inspect",
@@ -1639,15 +1798,19 @@ async fn run_ws_session(
                                             request_id
                                         );
                                         let args = parse_command_args(args_json);
-                                        CMD_CHANNEL.send(CommandRequest {
-                                            request_id,
-                                            name: name.into(),
-                                            args,
-                                        }).await;
+                                        CMD_CHANNEL
+                                            .send(CommandRequest {
+                                                request_id,
+                                                name: name.into(),
+                                                args,
+                                            })
+                                            .await;
                                         let reply = match with_timeout(
                                             Duration::from_secs(5),
                                             CMD_RESP.wait(),
-                                        ).await {
+                                        )
+                                        .await
+                                        {
                                             Ok(resp) => command_result_json(
                                                 resp.request_id,
                                                 &resp.output,
@@ -1655,7 +1818,9 @@ async fn run_ws_session(
                                             ),
                                             Err(_) => command_result_json(
                                                 request_id,
-                                                &CommandOutput::Error("timeout: device busy".into()),
+                                                &CommandOutput::Error(
+                                                    "timeout: device busy".into(),
+                                                ),
                                                 0,
                                             ),
                                         };
@@ -1672,7 +1837,11 @@ async fn run_ws_session(
                                         }
                                         break 'inner;
                                     }
-                                    InMsg::SetValue { request_id, path, value_json } => {
+                                    InMsg::SetValue {
+                                        request_id,
+                                        path,
+                                        value_json,
+                                    } => {
                                         ilog!(
                                             LogLevel::Debug,
                                             "inspect",
@@ -1681,24 +1850,64 @@ async fn run_ws_session(
                                             request_id
                                         );
                                         let reply = match parse_set_value(value_json) {
-                                            None => set_value_error(request_id, "MalformedRequest", path),
+                                            None => set_value_error(
+                                                request_id,
+                                                "MalformedRequest",
+                                                path,
+                                            ),
                                             Some(value) => {
-                                                SET_CHANNEL.send(SetValueRequest {
-                                                    request_id,
-                                                    path: path.into(),
-                                                    value,
-                                                }).await;
+                                                SET_CHANNEL
+                                                    .send(SetValueRequest {
+                                                        request_id,
+                                                        path: path.into(),
+                                                        value,
+                                                    })
+                                                    .await;
                                                 match with_timeout(
                                                     Duration::from_secs(5),
                                                     SET_RESP.wait(),
-                                                ).await {
-                                                    Ok((_, SetValueResult::Ok)) => set_value_ack(request_id, path),
-                                                    Ok((_, SetValueResult::ReadOnly)) => set_value_error(request_id, "ReadOnly", path),
-                                                    Ok((_, SetValueResult::TypeMismatch)) => set_value_error(request_id, "TypeMismatch", path),
-                                                    Ok((_, SetValueResult::OutOfBounds)) => set_value_error(request_id, "OutOfBounds", path),
-                                                    Ok((_, SetValueResult::UnknownField)) => set_value_error(request_id, "UnknownPath", path),
-                                                    Ok((_, SetValueResult::UnknownVariant)) => set_value_error(request_id, "UnknownVariant", path),
-                                                    Err(_) => set_value_error(request_id, "Timeout", path),
+                                                )
+                                                .await
+                                                {
+                                                    Ok((_, SetValueResult::Ok)) => {
+                                                        set_value_ack(request_id, path)
+                                                    }
+                                                    Ok((_, SetValueResult::ReadOnly)) => {
+                                                        set_value_error(
+                                                            request_id, "ReadOnly", path,
+                                                        )
+                                                    }
+                                                    Ok((_, SetValueResult::TypeMismatch)) => {
+                                                        set_value_error(
+                                                            request_id,
+                                                            "TypeMismatch",
+                                                            path,
+                                                        )
+                                                    }
+                                                    Ok((_, SetValueResult::OutOfBounds)) => {
+                                                        set_value_error(
+                                                            request_id,
+                                                            "OutOfBounds",
+                                                            path,
+                                                        )
+                                                    }
+                                                    Ok((_, SetValueResult::UnknownField)) => {
+                                                        set_value_error(
+                                                            request_id,
+                                                            "UnknownPath",
+                                                            path,
+                                                        )
+                                                    }
+                                                    Ok((_, SetValueResult::UnknownVariant)) => {
+                                                        set_value_error(
+                                                            request_id,
+                                                            "UnknownVariant",
+                                                            path,
+                                                        )
+                                                    }
+                                                    Err(_) => {
+                                                        set_value_error(request_id, "Timeout", path)
+                                                    }
                                                 }
                                             }
                                         };
@@ -1715,7 +1924,11 @@ async fn run_ws_session(
                                         }
                                         break 'inner;
                                     }
-                                    InMsg::SubscribeMetrics { request_id, paths_json, interval_ms } => {
+                                    InMsg::SubscribeMetrics {
+                                        request_id,
+                                        paths_json,
+                                        interval_ms,
+                                    } => {
                                         let paths = parse_string_array(paths_json);
                                         let effective_interval = interval_ms.max(100);
                                         for p in &paths {
@@ -1742,7 +1955,10 @@ async fn run_ws_session(
                                             break 'outer;
                                         }
                                     }
-                                    InMsg::UnsubscribeMetrics { request_id, paths_json } => {
+                                    InMsg::UnsubscribeMetrics {
+                                        request_id,
+                                        paths_json,
+                                    } => {
                                         let paths = parse_string_array(paths_json);
                                         if paths.is_empty() {
                                             subscribed_metric_paths.clear();
@@ -1848,8 +2064,18 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
             }
         }
         InMsg::TriggerLog { request_id } => {
-            ilog!(LogLevel::Info, "inspect", "log triggered from browser (request_id={})", request_id);
-            ilog!(LogLevel::Debug, "inspect", "uptime_ms={}", embassy_time::Instant::now().as_millis());
+            ilog!(
+                LogLevel::Info,
+                "inspect",
+                "log triggered from browser (request_id={})",
+                request_id
+            );
+            ilog!(
+                LogLevel::Debug,
+                "inspect",
+                "uptime_ms={}",
+                embassy_time::Instant::now().as_millis()
+            );
             ilog!(LogLevel::Warn, "inspect", "this is a sample warn message");
             format!(r#"{{"type":"TriggerLogAck","request_id":{}}}"#, request_id)
         }
@@ -1861,9 +2087,7 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
         | InMsg::SetValue { .. }
         | InMsg::SubscribeMetrics { .. }
         | InMsg::UnsubscribeMetrics { .. }
-        | InMsg::Unknown => {
-            error_resp(0, "UnknownMessage", "unrecognised message type")
-        }
+        | InMsg::Unknown => error_resp(0, "UnknownMessage", "unrecognised message type"),
     }
 }
 
@@ -1999,9 +2223,7 @@ async fn main(spawner: Spawner) -> ! {
 
         // Drain set-value channel — apply writable field mutations via DebugSetValue.
         while let Ok(req) = SET_CHANNEL.try_receive() {
-            let result = state.lock(|cell| {
-                cell.borrow_mut().set_field(&req.path, req.value)
-            });
+            let result = state.lock(|cell| cell.borrow_mut().set_field(&req.path, req.value));
             SET_RESP.signal((req.request_id, result));
         }
 
