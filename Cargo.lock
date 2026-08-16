@@ -880,6 +880,7 @@ dependencies = [
  "httparse",
  "iris-ui",
  "log",
+ "micromath",
  "qrcode-core",
  "sequential-storage",
  "serde",
