@@ -1,3 +1,15 @@
+## 2026-08-16 10:00
+
+**Milestone 12: metrics and time-series visualization (ESP32 firmware + browser UI)**
+
+- `inspect_demo.rs`: annotated `system.uptime_secs` (`metric, unit="s"`), `system.free_heap` (`metric, unit="B"`), `display.refresh_count` (`metric`), `network.rssi` (`metric, unit="dBm"`), `content.brightness` (`metric, unit="%"`).
+- `FieldNode` gains `metric: bool` and `unit: Option<&'static str>`; `build_schema`/`schema_to_json` propagate them.
+- New `InMsg` variants `SubscribeMetrics` and `UnsubscribeMetrics` with JSON helpers `metric_batch_json`, `subscribe_metrics_ack_json`, `unsubscribe_metrics_ack_json`.
+- `parse_string_array` helper for parsing JSON string arrays.
+- `debug_value_to_f64` converts any numeric `DebugValue` to `f64`.
+- `run_ws_session`: per-connection metric subscription state; `MetricBatch` pushed in outer loop when subscriptions active; timeout calculation accounts for metric interval; `SubscribeMetrics`/`UnsubscribeMetrics` handled synchronously in inner loop.
+- Browser UI: Metrics panel with subscribe checkboxes per metric field, interval/window selectors, pause/resume, unsubscribe-all; canvas line chart with fill per subscribed metric; live current/min/max/avg stats.
+
 ## 2026-08-15 22:00
 
 **Milestone 11: explicitly writable inspected properties (ESP32 firmware + browser UI)**

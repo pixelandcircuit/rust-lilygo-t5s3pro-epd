@@ -77,13 +77,13 @@ struct NetworkState {
     ip_c: u8,
     #[inspect(read_only)]
     ip_d: u8,
-    #[inspect(read_only)]
+    #[inspect(read_only, metric, unit = "dBm")]
     rssi: i8,
 }
 
 #[derive(DebugInspect, Default, Clone)]
 struct DisplayInfo {
-    #[inspect(read_only)]
+    #[inspect(read_only, metric)]
     refresh_count: u32,
     #[inspect(read_only)]
     power_on: bool,
@@ -91,9 +91,9 @@ struct DisplayInfo {
 
 #[derive(DebugInspect, Default, Clone)]
 struct SystemInfo {
-    #[inspect(read_only)]
+    #[inspect(read_only, metric, unit = "s")]
     uptime_secs: u32,
-    #[inspect(read_only)]
+    #[inspect(read_only, metric, unit = "B")]
     free_heap: u32,
 }
 
@@ -106,7 +106,7 @@ struct ContentState {
     #[inspect(read_only)]
     touch_y: u16,
     /// Writable: browser can set display brightness (0–100).
-    #[inspect(write, min = 0, max = 100)]
+    #[inspect(write, metric, unit = "%", min = 0, max = 100)]
     brightness: u8,
 }
 
@@ -280,6 +280,8 @@ struct FieldNode {
     read_only: bool,
     min_val: Option<f64>,
     max_val: Option<f64>,
+    metric: bool,
+    unit: Option<&'static str>,
     schema: SchemaNode,
 }
 
@@ -313,6 +315,8 @@ fn build_schema(inspect: &dyn Inspect) -> SchemaNode {
                         read_only: f.read_only,
                         min_val: f.min_val,
                         max_val: f.max_val,
+                        metric: f.metric,
+                        unit: f.unit,
                         schema,
                     }
                 })
@@ -343,12 +347,19 @@ fn schema_to_json(node: &SchemaNode) -> String {
                         Some(v) => format!(",\"max_val\":{}", v),
                         None => String::new(),
                     };
+                    let metric_json = if f.metric { ",\"metric\":true" } else { "" };
+                    let unit_json = match f.unit {
+                        Some(u) => format!(",\"unit\":\"{}\"", u),
+                        None => String::new(),
+                    };
                     format!(
-                        r#"{{"name":"{}","read_only":{}{}{},"schema":{}}}"#,
+                        r#"{{"name":"{}","read_only":{}{}{}{}{},"schema":{}}}"#,
                         f.name,
                         f.read_only,
                         min_json,
                         max_json,
+                        metric_json,
+                        unit_json,
                         schema_to_json(&f.schema)
                     )
                 })
@@ -503,6 +514,8 @@ enum InMsg<'a> {
     GetCommands { request_id: u32 },
     InvokeCommand { request_id: u32, name: &'a str, args_json: &'a str },
     SetValue { request_id: u32, path: &'a str, value_json: &'a str },
+    SubscribeMetrics { request_id: u32, paths_json: &'a str, interval_ms: u32 },
+    UnsubscribeMetrics { request_id: u32, paths_json: &'a str },
     Unknown,
 }
 
@@ -527,6 +540,15 @@ fn parse_msg(json: &str) -> InMsg<'_> {
             request_id,
             path: json_str_field(json, "path").unwrap_or(""),
             value_json: json_raw_object_field(json, "value").unwrap_or("{}"),
+        },
+        Some("SubscribeMetrics") => InMsg::SubscribeMetrics {
+            request_id,
+            paths_json: json_raw_array_field(json, "paths").unwrap_or("[]"),
+            interval_ms: json_u32_field(json, "interval_ms").unwrap_or(1000),
+        },
+        Some("UnsubscribeMetrics") => InMsg::UnsubscribeMetrics {
+            request_id,
+            paths_json: json_raw_array_field(json, "paths").unwrap_or("[]"),
         },
         _ => InMsg::Unknown,
     }
@@ -728,6 +750,74 @@ fn parse_set_value(value_json: &str) -> Option<CommandArg> {
         "enum" => json_str_field(value_json, "value").map(|s| CommandArg::Enum(s.into())),
         _ => None,
     }
+}
+
+fn debug_value_to_f64(v: DebugValue<'_>) -> Option<f64> {
+    match v {
+        DebugValue::U8(n) => Some(n as f64),
+        DebugValue::U16(n) => Some(n as f64),
+        DebugValue::U32(n) => Some(n as f64),
+        DebugValue::U64(n) => Some(n as f64),
+        DebugValue::U128(n) => Some(n as f64),
+        DebugValue::I8(n) => Some(n as f64),
+        DebugValue::I16(n) => Some(n as f64),
+        DebugValue::I32(n) => Some(n as f64),
+        DebugValue::I64(n) => Some(n as f64),
+        DebugValue::I128(n) => Some(n as f64),
+        DebugValue::F32(n) => Some(n as f64),
+        DebugValue::F64(n) => Some(n),
+        _ => None,
+    }
+}
+
+fn parse_string_array(json: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let json = json.trim();
+    if !json.starts_with('[') { return result; }
+    let mut rest = &json[1..];
+    loop {
+        rest = rest.trim_start_matches(|c: char| c == ',' || c.is_ascii_whitespace());
+        if rest.is_empty() || rest.starts_with(']') { break; }
+        if !rest.starts_with('"') { break; }
+        rest = &rest[1..];
+        if let Some(end) = rest.find('"') {
+            result.push(rest[..end].into());
+            rest = &rest[end + 1..];
+        } else { break; }
+    }
+    result
+}
+
+fn metric_batch_json(timestamp_ms: u64, interval_ms: u32, samples: &[(String, f64)]) -> String {
+    let sample_jsons: Vec<String> = samples
+        .iter()
+        .map(|(path, value)| format!(r#"{{"path":"{}","value":{}}}"#, path, value))
+        .collect();
+    format!(
+        r#"{{"type":"MetricBatch","timestamp_ms":{},"interval_ms":{},"samples":[{}]}}"#,
+        timestamp_ms,
+        interval_ms,
+        sample_jsons.join(",")
+    )
+}
+
+fn subscribe_metrics_ack_json(rid: u32, effective_interval_ms: u32, active_paths: &[String]) -> String {
+    let path_jsons: Vec<String> = active_paths.iter().map(|p| format!("\"{}\"", p)).collect();
+    format!(
+        r#"{{"type":"SubscribeMetricsAck","request_id":{},"effective_interval_ms":{},"active_paths":[{}]}}"#,
+        rid,
+        effective_interval_ms,
+        path_jsons.join(",")
+    )
+}
+
+fn unsubscribe_metrics_ack_json(rid: u32, active_paths: &[String]) -> String {
+    let path_jsons: Vec<String> = active_paths.iter().map(|p| format!("\"{}\"", p)).collect();
+    format!(
+        r#"{{"type":"UnsubscribeMetricsAck","request_id":{},"active_paths":[{}]}}"#,
+        rid,
+        path_jsons.join(",")
+    )
 }
 
 fn find_matching_brace(s: &str) -> usize {
@@ -1046,6 +1136,11 @@ async fn run_ws_session(
 
     let mut last_event = Instant::now();
 
+    // Metric subscription state — per-connection, owned by this WS session.
+    let mut subscribed_metric_paths: Vec<String> = Vec::new();
+    let mut metric_interval_ms: u32 = 0;
+    let mut last_metric: Option<Instant> = None;
+
     'outer: loop {
         // Drain log channel — best-effort, non-blocking.
         // Each iteration: atomically claim the accumulated dropped count and
@@ -1068,6 +1163,36 @@ async fn run_ws_session(
                     }
                 }
                 Err(_) => break,
+            }
+        }
+
+        // Push MetricBatch when subscriptions are active and interval has elapsed.
+        if !subscribed_metric_paths.is_empty() && metric_interval_ms > 0 {
+            let should_sample = match last_metric {
+                None => true,
+                Some(t) => Instant::now() - t >= Duration::from_millis(metric_interval_ms as u64),
+            };
+            if should_sample {
+                let ts = Instant::now().as_millis();
+                let snap: AppState = state.lock(|cell| cell.borrow().clone());
+                let samples: Vec<(String, f64)> = subscribed_metric_paths
+                    .iter()
+                    .filter_map(|path| {
+                        snap.get_field_path(path)
+                            .and_then(debug_value_to_f64)
+                            .map(|v| (path.clone(), v))
+                    })
+                    .collect();
+                if !samples.is_empty() {
+                    let json = metric_batch_json(ts, metric_interval_ms, &samples);
+                    let n = ws
+                        .write(WebSocketSendMessageType::Text, true, json.as_bytes(), &mut tx_buf)
+                        .unwrap_or(0);
+                    if n > 0 && write_all(sock, &tx_buf[..n]).await.is_err() {
+                        break 'outer;
+                    }
+                }
+                last_metric = Some(Instant::now());
             }
         }
 
@@ -1105,6 +1230,19 @@ async fn run_ws_session(
         } else {
             Duration::from_millis(20)
         };
+        let remaining_metric = if !subscribed_metric_paths.is_empty() && metric_interval_ms > 0 {
+            match last_metric {
+                None => Duration::from_millis(1),
+                Some(t) => {
+                    let e = Instant::now() - t;
+                    let interval = Duration::from_millis(metric_interval_ms as u64);
+                    if e >= interval { Duration::from_millis(10) } else { interval - e }
+                }
+            }
+        } else {
+            Duration::from_secs(3600)
+        };
+        let remaining = remaining.min(remaining_metric);
 
         match with_timeout(remaining, sock.read(&mut rx_buf[buf_used..])).await {
             Ok(Ok(0)) | Ok(Err(_)) => break,
@@ -1236,6 +1374,58 @@ async fn run_ws_session(
                                         }
                                         break 'inner;
                                     }
+                                    InMsg::SubscribeMetrics { request_id, paths_json, interval_ms } => {
+                                        let paths = parse_string_array(paths_json);
+                                        let effective_interval = interval_ms.max(100);
+                                        for p in &paths {
+                                            if !subscribed_metric_paths.contains(p) {
+                                                subscribed_metric_paths.push(p.clone());
+                                            }
+                                        }
+                                        metric_interval_ms = effective_interval;
+                                        last_metric = None; // trigger immediate first batch
+                                        let reply = subscribe_metrics_ack_json(
+                                            request_id,
+                                            effective_interval,
+                                            &subscribed_metric_paths,
+                                        );
+                                        let n = ws
+                                            .write(
+                                                WebSocketSendMessageType::Text,
+                                                true,
+                                                reply.as_bytes(),
+                                                &mut tx_buf,
+                                            )
+                                            .unwrap_or(0);
+                                        if write_all(sock, &tx_buf[..n]).await.is_err() {
+                                            break 'outer;
+                                        }
+                                    }
+                                    InMsg::UnsubscribeMetrics { request_id, paths_json } => {
+                                        let paths = parse_string_array(paths_json);
+                                        if paths.is_empty() {
+                                            subscribed_metric_paths.clear();
+                                            metric_interval_ms = 0;
+                                            last_metric = None;
+                                        } else {
+                                            subscribed_metric_paths.retain(|p| !paths.contains(p));
+                                        }
+                                        let reply = unsubscribe_metrics_ack_json(
+                                            request_id,
+                                            &subscribed_metric_paths,
+                                        );
+                                        let n = ws
+                                            .write(
+                                                WebSocketSendMessageType::Text,
+                                                true,
+                                                reply.as_bytes(),
+                                                &mut tx_buf,
+                                            )
+                                            .unwrap_or(0);
+                                        if write_all(sock, &tx_buf[..n]).await.is_err() {
+                                            break 'outer;
+                                        }
+                                    }
                                     _ => {
                                         let reply = handle_msg(json, state, &schema_json);
                                         let n = ws
@@ -1325,7 +1515,12 @@ fn handle_msg(json: &str, state: &'static SharedState, schema_json: &str) -> Str
         InMsg::GetCommands { request_id } => {
             commands_response_json(request_id, AppState::command_defs())
         }
-        InMsg::GetScreenshot { .. } | InMsg::InvokeCommand { .. } | InMsg::SetValue { .. } | InMsg::Unknown => {
+        InMsg::GetScreenshot { .. }
+        | InMsg::InvokeCommand { .. }
+        | InMsg::SetValue { .. }
+        | InMsg::SubscribeMetrics { .. }
+        | InMsg::UnsubscribeMetrics { .. }
+        | InMsg::Unknown => {
             error_resp(0, "UnknownMessage", "unrecognised message type")
         }
     }

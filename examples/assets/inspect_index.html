@@ -491,6 +491,116 @@ main { flex: 1; padding: 20px 24px 80px }
 .cmd-status.ok  { color: var(--green) }
 .cmd-status.err { color: var(--red) }
 .cmd-status.pending { color: var(--muted) }
+
+/* ── metrics panel ───────────────────────────────────────── */
+#metrics-panel {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  overflow: hidden;
+}
+#metrics-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+}
+#metrics-panel-header:hover { background: #1c2128 }
+#metrics-panel-header .chevron { color: var(--muted) }
+#metrics-panel-header .struct-label { color: var(--accent) }
+#metrics-panel.collapsed #metrics-panel-body { display: none }
+#metrics-panel.collapsed #metrics-panel-header .chevron::before { content: '▸' }
+#metrics-panel-header .chevron::before { content: '▾' }
+
+.metrics-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+.metrics-toolbar label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px }
+.metrics-toolbar select {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.metrics-toolbar select:focus { border-color: var(--accent) }
+.metrics-toolbar button {
+  background: #21262d;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.metrics-toolbar button:hover { background: #30363d; border-color: var(--accent); color: #fff }
+.metrics-toolbar button.paused { border-color: var(--yellow); color: var(--yellow) }
+
+.metrics-subscribe-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.metric-sub-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.metric-sub-item input[type="checkbox"] { cursor: pointer; accent-color: var(--accent) }
+.metric-sub-item label { cursor: pointer; color: var(--text) }
+.metric-sub-item .metric-unit { color: var(--muted); font-size: 11px }
+
+#metrics-charts { padding: 10px 14px; display: flex; flex-direction: column; gap: 16px }
+
+.metric-card {
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.metric-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.metric-path { font-size: 12px; color: var(--accent); font-weight: 600 }
+.metric-unit-label { font-size: 11px; color: var(--muted) }
+.metric-stats {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.metric-stats span { display: flex; gap: 4px }
+.metric-stats .sv { color: var(--text); font-weight: 600 }
+.metric-stats .cur .sv { color: var(--green) }
+canvas.metric-canvas {
+  display: block;
+  width: 100%;
+  height: 80px;
+  border-radius: 4px;
+  background: #0d1117;
+}
 </style>
 </head>
 <body>
@@ -564,6 +674,38 @@ main { flex: 1; padding: 20px 24px 80px }
     </div>
     <div id="commands-panel-body">
       <div id="commands-list"></div>
+    </div>
+  </section>
+
+  <!-- ── metrics panel ──────────────────────────────────────── -->
+  <section id="metrics-panel" class="collapsed">
+    <div id="metrics-panel-header">
+      <span class="chevron"></span>
+      <span class="struct-label">Metrics</span>
+      <span id="metrics-count" class="type-tag">0 available</span>
+    </div>
+    <div id="metrics-panel-body">
+      <div class="metrics-toolbar">
+        <label>Interval <select id="metrics-interval">
+          <option value="200">200 ms</option>
+          <option value="500" selected>500 ms</option>
+          <option value="1000">1 s</option>
+          <option value="2000">2 s</option>
+          <option value="5000">5 s</option>
+        </select></label>
+        <label>Window <select id="metrics-window">
+          <option value="30">30 s</option>
+          <option value="60" selected>60 s</option>
+          <option value="120">2 min</option>
+          <option value="300">5 min</option>
+        </select></label>
+        <button id="metrics-pause-btn">Pause</button>
+        <button id="metrics-unsub-btn">Unsubscribe All</button>
+      </div>
+      <div class="metrics-subscribe-list" id="metrics-subscribe-list">
+        <span style="color:var(--muted);font-size:12px">No metric fields discovered yet.</span>
+      </div>
+      <div id="metrics-charts"></div>
     </div>
   </section>
 </main>
@@ -658,6 +800,10 @@ function dispatch(msg) {
       handleLogRecord(msg);
       break;
 
+    case 'MetricBatch':
+      handleMetricBatch(msg);
+      break;
+
     case 'Error':
       console.warn('[server error]', msg);
       break;
@@ -675,6 +821,10 @@ async function discoverAndRender() {
   const root = document.getElementById('tree');
   root.innerHTML = '';
   root.appendChild(renderNode(schemaResp.schema, ''));
+
+  // Discover metric fields and populate the metrics panel subscribe list.
+  const mfields = collectMetricFields(schemaResp.schema, '');
+  renderMetricSubscribeList(mfields);
 
   // Fetch initial values for all leaf paths concurrently.
   const leaves = collectLeaves(schemaResp.schema, '');
@@ -1283,6 +1433,264 @@ document.querySelector('#logs-panel-header .logs-toolbar').addEventListener('cli
 // ─── commands panel toggle ────────────────────────────────────────────────────
 document.getElementById('commands-panel-header').addEventListener('click', () => {
   document.getElementById('commands-panel').classList.toggle('collapsed');
+});
+
+// ─── metrics ──────────────────────────────────────────────────────────────────
+
+// State
+const METRIC_RING = 300;            // samples per path
+const metricData  = new Map();      // path → { ring: Float64Array, ringTs: Float64Array, head, count, min, max, sum }
+let   metricFields = [];            // [{path, unit, minVal, maxVal}]
+let   metricPaused = false;
+let   metricAnimFrame = 0;
+
+function collectMetricFields(schema, prefix) {
+  if (schema.kind !== 'Struct') return [];
+  const out = [];
+  for (const f of schema.fields) {
+    const fp = prefix ? `${prefix}.${f.name}` : f.name;
+    if (f.metric) {
+      out.push({ path: fp, unit: f.unit ?? null, minVal: f.min_val ?? null, maxVal: f.max_val ?? null });
+    }
+    if (f.schema?.kind === 'Struct') {
+      out.push(...collectMetricFields(f.schema, fp));
+    }
+  }
+  return out;
+}
+
+function renderMetricSubscribeList(fields) {
+  metricFields = fields;
+  const container = document.getElementById('metrics-subscribe-list');
+  container.innerHTML = '';
+  const countEl = document.getElementById('metrics-count');
+  countEl.textContent = `${fields.length} available`;
+
+  if (fields.length > 0) {
+    document.getElementById('metrics-panel').classList.remove('collapsed');
+  }
+
+  for (const f of fields) {
+    const item = el('div', 'metric-sub-item');
+
+    const cb = el('input');
+    cb.type = 'checkbox';
+    cb.id = `mcb:${f.path}`;
+    cb.dataset.path = f.path;
+
+    const lbl = el('label');
+    lbl.htmlFor = cb.id;
+    lbl.textContent = f.path;
+
+    const unitSpan = el('span', 'metric-unit');
+    unitSpan.textContent = f.unit ? ` [${f.unit}]` : '';
+
+    cb.addEventListener('change', () => {
+      if (cb.checked) subscribeMetric(f.path);
+      else            unsubscribeMetric(f.path);
+    });
+
+    item.append(cb, lbl, unitSpan);
+    container.appendChild(item);
+  }
+}
+
+function getInterval() {
+  return parseInt(document.getElementById('metrics-interval').value, 10) || 500;
+}
+
+function getWindowSec() {
+  return parseInt(document.getElementById('metrics-window').value, 10) || 60;
+}
+
+function subscribeMetric(path) {
+  if (!metricData.has(path)) {
+    metricData.set(path, {
+      ring:   new Float64Array(METRIC_RING),
+      ringTs: new Float64Array(METRIC_RING),
+      head: 0, count: 0,
+      min: Infinity, max: -Infinity, sum: 0,
+    });
+    ensureMetricCard(path);
+  }
+  const interval = getInterval();
+  send({ type: 'SubscribeMetrics', request_id: nextId++, paths: [path], interval_ms: interval });
+}
+
+function unsubscribeMetric(path) {
+  send({ type: 'UnsubscribeMetrics', request_id: nextId++, paths: [path] });
+  metricData.delete(path);
+  const card = document.getElementById(`mc:${path}`);
+  if (card) card.remove();
+}
+
+function ensureMetricCard(path) {
+  if (document.getElementById(`mc:${path}`)) return;
+  const f = metricFields.find(x => x.path === path) ?? { path, unit: null };
+
+  const card = el('div', 'metric-card');
+  card.id = `mc:${path}`;
+
+  const header = el('div', 'metric-card-header');
+
+  const pathEl = el('span', 'metric-path');
+  pathEl.textContent = path;
+
+  const unitEl = el('span', 'metric-unit-label');
+  unitEl.textContent = f.unit ? `[${f.unit}]` : '';
+
+  const stats = el('div', 'metric-stats');
+  stats.innerHTML = `
+    <span class="cur"><em>cur</em> <span class="sv" id="ms-cur:${path}">—</span></span>
+    <span><em>min</em> <span class="sv" id="ms-min:${path}">—</span></span>
+    <span><em>max</em> <span class="sv" id="ms-max:${path}">—</span></span>
+    <span><em>avg</em> <span class="sv" id="ms-avg:${path}">—</span></span>
+  `;
+
+  header.append(pathEl, unitEl, stats);
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'metric-canvas';
+  canvas.id = `mc-canvas:${path}`;
+  canvas.width  = 600;
+  canvas.height = 80;
+
+  card.append(header, canvas);
+  document.getElementById('metrics-charts').appendChild(card);
+}
+
+function handleMetricBatch(msg) {
+  if (metricPaused) return;
+  const now = msg.timestamp_ms;
+  for (const s of msg.samples) {
+    const d = metricData.get(s.path);
+    if (!d) continue;
+    d.ring[d.head]   = s.value;
+    d.ringTs[d.head] = now;
+    d.head = (d.head + 1) % METRIC_RING;
+    if (d.count < METRIC_RING) d.count++;
+    if (s.value < d.min) d.min = s.value;
+    if (s.value > d.max) d.max = s.value;
+    d.sum += s.value;
+  }
+
+  // Batch all redraws into next animation frame
+  if (metricAnimFrame) return;
+  metricAnimFrame = requestAnimationFrame(() => {
+    metricAnimFrame = 0;
+    for (const [path, d] of metricData) {
+      if (d.count === 0) continue;
+      updateMetricStats(path, d);
+      drawMetricChart(path, d);
+    }
+  });
+}
+
+function fmtNum(v) {
+  if (!isFinite(v)) return '—';
+  return Math.abs(v) >= 1000 ? v.toFixed(0) : v.toPrecision(4).replace(/\.?0+$/, '');
+}
+
+function updateMetricStats(path, d) {
+  const cur = d.ring[(d.head - 1 + METRIC_RING) % METRIC_RING];
+  const avg = d.sum / (d.count * (d.count >= METRIC_RING ? 1 : 1));
+  const safeAvg = d.count > 0 ? d.sum / d.count : 0;
+
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set(`ms-cur:${path}`, fmtNum(cur));
+  set(`ms-min:${path}`, fmtNum(d.min));
+  set(`ms-max:${path}`, fmtNum(d.max));
+  set(`ms-avg:${path}`, fmtNum(safeAvg));
+}
+
+function drawMetricChart(path, d) {
+  const canvas = document.getElementById(`mc-canvas:${path}`);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  if (d.count < 2) return;
+
+  const windowMs = getWindowSec() * 1000;
+  const nowTs = d.ringTs[(d.head - 1 + METRIC_RING) % METRIC_RING];
+  const startTs = nowTs - windowMs;
+
+  // Collect visible samples (within time window), oldest first
+  const pts = [];
+  for (let i = 0; i < d.count; i++) {
+    const idx = (d.head - d.count + i + METRIC_RING) % METRIC_RING;
+    const ts = d.ringTs[idx];
+    if (ts >= startTs) pts.push({ ts, v: d.ring[idx] });
+  }
+  if (pts.length < 2) return;
+
+  // Y range: use data min/max with 10% padding
+  let yMin = Infinity, yMax = -Infinity;
+  for (const p of pts) { if (p.v < yMin) yMin = p.v; if (p.v > yMax) yMax = p.v; }
+  if (yMin === yMax) { yMin -= 1; yMax += 1; }
+  const yRange = yMax - yMin;
+  const yPad = yRange * 0.1;
+  yMin -= yPad; yMax += yPad;
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(48,54,61,0.7)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const y = (i / 4) * H;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Line
+  ctx.strokeStyle = '#58a6ff';
+  ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    const x = ((pts[i].ts - startTs) / windowMs) * W;
+    const y = H - ((pts[i].v - yMin) / (yMax - yMin)) * H;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Fill under line
+  const lastX = ((pts[pts.length - 1].ts - startTs) / windowMs) * W;
+  const firstX = ((pts[0].ts - startTs) / windowMs) * W;
+  ctx.lineTo(lastX, H); ctx.lineTo(firstX, H); ctx.closePath();
+  ctx.fillStyle = 'rgba(88,166,255,0.08)';
+  ctx.fill();
+}
+
+// ─── metrics: controls ───────────────────────────────────────────────────────
+
+document.getElementById('metrics-pause-btn').addEventListener('click', () => {
+  metricPaused = !metricPaused;
+  const btn = document.getElementById('metrics-pause-btn');
+  btn.textContent = metricPaused ? 'Resume' : 'Pause';
+  btn.classList.toggle('paused', metricPaused);
+});
+
+document.getElementById('metrics-unsub-btn').addEventListener('click', () => {
+  const paths = [...metricData.keys()];
+  if (paths.length === 0) return;
+  send({ type: 'UnsubscribeMetrics', request_id: nextId++, paths: [] }); // empty = unsubscribe all
+  metricData.clear();
+  document.getElementById('metrics-charts').innerHTML = '';
+  // Uncheck all checkboxes
+  document.querySelectorAll('#metrics-subscribe-list input[type="checkbox"]').forEach(cb => {
+    cb.checked = false;
+  });
+});
+
+document.getElementById('metrics-interval').addEventListener('change', () => {
+  const paths = [...metricData.keys()];
+  if (paths.length === 0) return;
+  const interval = getInterval();
+  send({ type: 'SubscribeMetrics', request_id: nextId++, paths, interval_ms: interval });
+});
+
+document.getElementById('metrics-panel-header').addEventListener('click', () => {
+  document.getElementById('metrics-panel').classList.toggle('collapsed');
 });
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
