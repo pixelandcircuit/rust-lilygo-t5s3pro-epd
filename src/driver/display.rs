@@ -309,6 +309,7 @@ impl<'a> Display<'a> {
             row[(area.x / 4 + pos / 4) as usize] |= mask;
         }
         line_buffer_reorder(&mut row);
+        self.skipping = 0;
         self.epd.frame_start()?;
 
         for i in 0..Self::HEIGHT {
@@ -337,7 +338,13 @@ impl<'a> Display<'a> {
         match self.skipping {
             0 => {
                 self.epd.set_buffer(&[0u8; BYTES_PER_LINE])?;
+                // output_row latches the PREVIOUS DMA transfer. Finish that
+                // pending active row while shifting in neutral source data.
                 self.epd.output_row(output_time)?;
+                // Neutral codes alone still leave the source outputs enabled.
+                // Blank them for the rest of the skipped stretch to reduce
+                // disturbance of pixels outside repeated partial updates.
+                self.epd.set_output_enabled(false);
             }
             i if i < 2 => {
                 self.epd.output_row(10)?;
@@ -352,6 +359,7 @@ impl<'a> Display<'a> {
 
     fn row_write(&mut self, output_time: u16) -> Result<()> {
         self.skipping = 0;
+        self.epd.set_output_enabled(true);
         self.epd.output_row(output_time)?;
         Ok(())
     }

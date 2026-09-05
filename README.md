@@ -77,6 +77,7 @@ cargo run --example <name>
 | `ereader_full`   | Full Moby Dick reader; TrueType antialiased text; header dropdown menus for backlight, font size, rotation, and battery stats; deep sleep after 60 s of inactivity; reading position persists across full power cycles via NVS flash |
 | `graphics_test`  | 7-screen graphics test: shapes, typography, grayscale, images, animation, timing                             |
 | `touch_button`   | Capacitive touch demo; tap the button to toggle fill, coordinates shown in status bar                        |
+| `minesweeper`    | Touch game: 9x9 board, 10 mines, Reveal/Flag mode buttons, safe first reveal, empty-cell flood fill, and New Game |
 | `backlight`      | Frontlight demo; fades the LED frontlight in and out using LEDC PWM on GPIO11                                |
 | `finger_draw`    | Touch drawing demo; paint 16×16 px dots wherever your finger moves; partial-refresh timing printed to serial |
 | `battery_status` | Dashboard showing live readings from the BQ27220 fuel gauge and BQ25896 charger; refreshes every 10 s        |
@@ -94,6 +95,34 @@ cargo run --example touch_button
 
 The `--monitor` flag is included automatically via `.cargo/config.toml`, so serial output appears in the terminal after
 flashing.
+
+### Minesweeper
+
+Run `cargo run --example minesweeper`. Choose **Reveal** or **Flag**, then tap a
+square. The selected mode button is black. In Flag mode, tap again to remove a
+flag; flagged cells are protected from revealing. Cells show `#` for hidden,
+`F` for flagged, `1`-`8` for adjacent mines, and a blank for revealed empty cells.
+Mines (`*`) are shown when the game ends. Reveal all 71 safe cells to win.
+The first reveal is always safe, and connected empty cells open automatically.
+**New Game** resets the board and selects Reveal mode. Mine placement uses the
+timing of the first reveal, so subsequent games get a new layout.
+
+Single-row changes use partial refresh. Because repeated partial updates have
+shown fading and darkening on hardware, changes spanning multiple board rows
+use a full clear/redraw, and every sixth update also refreshes the full screen.
+This maintenance refresh visibly flashes and takes longer; it is a workaround
+for accumulated pixel drift, not a verified waveform or VCOM calibration fix.
+`FULL_REFRESH_INTERVAL` in the example controls the interval (use at least 1).
+Display power is switched off between updates.
+See [Minesweeper refresh notes](docs/minesweeper-refresh.md) for driver changes,
+hardware observations, and the manufacturer VCOM reference.
+
+The game rules can be tested without hardware:
+
+```sh
+rustc +stable --edition=2021 --test examples/minesweeper/game.rs -o /tmp/minesweeper-tests
+/tmp/minesweeper-tests
+```
 
 ## LoRa (`lora_rx`)
 

@@ -1,3 +1,23 @@
+## 2026-09-05
+
+**Minesweeper example and partial-refresh maintenance**
+
+- Added a touch Minesweeper example with ASCII cells, a 9x9/10-mine board,
+  Reveal/Flag controls, safe first reveal, flood fill, win/loss, and New Game.
+- Added five host-side tests for hardware-independent game rules.
+- Added clipped repaint of changed cells/controls, full refresh for multi-row
+  changes and every sixth update, and display power-off between updates.
+- Fixed discarded RMT skip transactions, blanked outputs during skipped row
+  stretches, and reset skip state at the start of hardware clear frames.
+- Corrected the local `iris-ui` dependency path to `../iris-ui`.
+- Documented hardware observations and VCOM references in
+  [Minesweeper refresh notes](docs/minesweeper-refresh.md). VCOM remains -1.60 V;
+  LILYGO's display/LVGL examples use -1.56 V, which has not been tested here.
+- Validation: ESP32-S3 Minesweeper build, five rule tests, and user hardware
+  testing. Periodic full refresh improves visible drift; its cause is unresolved.
+
+---
+
 ## 2026-08-16 14:00
 
 **Milestone 13: network discovery and device identity (ESP32 firmware + browser UI)**

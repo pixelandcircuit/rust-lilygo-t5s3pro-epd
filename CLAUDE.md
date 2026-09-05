@@ -87,7 +87,7 @@ loop {}
 
 ### iris-ui integration
 
-`iris-ui` (`../rust-embedded-gui`) expects `DrawTarget<Color=Rgb565>`. Hardware examples wrap `Display` in an inline `Rgb565Adapter` that converts pixels via perceptual luma weights. The simulator skips this because `embedded-graphics-simulator` natively uses `Rgb565`.
+`iris-ui` (`../iris-ui`) expects `DrawTarget<Color=Rgb565>`. Hardware examples wrap `Display` in an inline `Rgb565Adapter` that converts pixels via perceptual luma weights. The simulator skips this because `embedded-graphics-simulator` natively uses `Rgb565`.
 
 Key iris-ui rendering pattern:
 ```rust

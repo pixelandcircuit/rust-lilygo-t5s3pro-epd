@@ -414,6 +414,7 @@ fn row_skip(&mut self, output_time: u16) -> Result<()> {
         0 => {
             set_buffer([0u8; BYTES_PER_LINE]);  // zero data = VCOM for all pixels
             output_row(output_time);            // full DMA, but with all-zero data
+            set_output_enabled(false);         // blank after pending row completes
         }
         1 => {
             output_row(10);                     // short pulse, no data change
@@ -433,10 +434,15 @@ The `skipping` counter tracks consecutive non-tainted rows:
 - **Row 1**: A short `output_row(10)` that advances the panel row pointer with minimal
   drive.
 - **Row 2+**: `skip()` — just a fast RMT CKV pulse (45/5 µs), no I8080 activity at all.
-  This is the most efficient path for long runs of clean rows.
+  The pulse is awaited so the RMT channel is retained for the next row.
 
-`row_write` resets `skipping = 0`, so the transition protocol restarts whenever the
-scan reaches the next tainted row.
+`row_write` resets `skipping = 0` and re-enables outputs, so the transition protocol
+restarts whenever the scan reaches the next tainted row. Hardware clear frames
+also reset `skipping` at frame start.
+
+These measures reduce disturbance but do not guarantee stable untouched pixels.
+See [Minesweeper refresh notes](minesweeper-refresh.md) for observed fading/darkening,
+the full-refresh workaround, and unresolved VCOM calibration.
 
 ---
 

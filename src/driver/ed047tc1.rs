@@ -261,9 +261,26 @@ impl<'a> ED047TC1<'a> {
         self.leh.set_low();
     }
 
+    /// Blank source outputs while traversing rows outside a partial update.
+    /// Avoid redundant I2C writes inside a run of active or skipped rows.
+    pub(crate) fn set_output_enabled(&mut self, enabled: bool) {
+        let next = if enabled {
+            self.pca_out1 | PCA_OE
+        } else {
+            self.pca_out1 & !PCA_OE
+        };
+        if next != self.pca_out1 {
+            self.pca_out1 = next;
+            self.pca_flush();
+        }
+    }
+
     pub(crate) fn skip(&mut self) -> crate::driver::Result<()> {
         let data = pulse!(45, 5);
-        self.rmt.pulse(&data, false)?;
+        // Wait for CKV to finish and return the channel to Rmt. Dropping an
+        // asynchronous transaction loses the channel, causing the next skip
+        // to reconfigure RMT instead of advancing the gate clock reliably.
+        self.rmt.pulse(&data, true)?;
         Ok(())
     }
 
