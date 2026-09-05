@@ -86,12 +86,24 @@ cargo run --example <name>
 | `lora_rx`        | Puts the onboard SX1262 into continuous-receive mode and prints each received packet (hex dump + ASCII + RSSI/SNR) to serial; frequency, SF, BW, and CR are constants at the top of the file |
 | `sd_list`        | Detects whether a micro-SD card is inserted (CS=GPIO12, SPI2), mounts the FAT filesystem via `embedded-sdmmc`, and recursively prints the full directory tree with file sizes; gracefully reports "no card detected" if the slot is empty |
 | `partial_repaint_bench` | Benchmarks partial repaint speed at three rectangle sizes (50×30, 100×60, 200×120); alternates black-on-white / white-on-black fills 20× per size and reports min/max/avg round-trip ms and µs/pixel to serial |
+| `ap_web_qr`      | Open WiFi AP (`epaper-device`), QR code, mDNS, DHCP, and a tiny built-in HTTP page at `http://epaper-device.local/` |
 
 **Example:**
 
 ```
 cargo run --example touch_button
 ```
+
+The AP/web example uses the dedicated `ap-web` feature:
+
+```sh
+cargo run --example ap_web_qr --features ap-web
+```
+
+Connect to the open `epaper-device` network, then scan the displayed QR code.
+The QR code configures WiFi; open `http://epaper-device.local/` after joining
+to view the built-in page. `http://192.168.4.1/` remains available as a
+fallback if the phone does not resolve mDNS names on the access point.
 
 The `--monitor` flag is included automatically via `.cargo/config.toml`, so serial output appears in the terminal after
 flashing.
