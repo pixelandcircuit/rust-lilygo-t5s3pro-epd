@@ -44,7 +44,7 @@ use iris_ui::{
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
-const THEME: Theme = Theme {
+const THEME: Theme<Rgb565> = Theme {
     font: FontKind::Bitmap(FONT_10X20),
     bold_font: FontKind::Bitmap(FONT_9X18_BOLD),
     standard: ViewStyle {
@@ -116,7 +116,7 @@ fn rgb565_to_gray4(c: Rgb565) -> Gray4 {
 
 // ── Scene rendering ───────────────────────────────────────────────────────────
 
-fn render(display: &mut Display, scene: &mut Scene, scale: u32) {
+fn render(display: &mut Display, scene: &mut Scene<Rgb565>, scale: u32) {
     // EmbeddedDrawingContext::new() initializes clip to Bounds::new_empty()
     // which has size {w:-99, h:-99}. bounds_to_rect casts w/h to u32, causing
     // "width is too large" panic. Must set ctx.clip to a valid region first.
@@ -134,7 +134,7 @@ fn render(display: &mut Display, scene: &mut Scene, scale: u32) {
 
 // ── Input action handler ──────────────────────────────────────────────────────
 
-fn handle_action(action: Option<OutputAction>, scene: &mut Scene) {
+fn handle_action(action: Option<OutputAction>, scene: &mut Scene<Rgb565>) {
     let text = match action {
         Some(OutputAction::Command(cmd)) => alloc::format!("Command: {}", cmd),
         Some(OutputAction::Selected(lbl, idx)) => alloc::format!("Selected: {} ({})", lbl, idx),
@@ -203,12 +203,11 @@ fn main() -> ! {
     let pan = make_panel(&panel1)
         .with_layout(Some(layout_vbox))
         .with_visible(true);
-    let l1 = make_label("l1", "The first label");
+    let l1 = make_label(&ViewId::new("l1"), "The first label");
     scene.add_view_to_parent(l1, &panel1);
     // let b1 = make_full_button(&ViewId::new("b1"), "The first button","toggle",false);
     // scene.add_view_to_parent(b1, &pan.name);
-    let b2 = make_full_button(&ViewId::new("b2"), "The second button", "toggle2", false);
-    // scene.add_view_to_parent(b2, &pan.name);
+    // A second button can be added here when experimenting with layouts.
     //
     let t1 = make_toggle_button(&ViewId::new("toggle1"), "Toggle");
     scene.add_view_to_parent(t1, &pan.name);
@@ -228,7 +227,7 @@ fn main() -> ! {
     display.flush(DrawMode::BlackOnWhite).unwrap();
 
     // ── Main loop ─────────────────────────────────────────────────────────────
-    let empty_handlers: Vec<iris_ui::Callback> = Vec::new();
+    let empty_handlers: Vec<iris_ui::Callback<Rgb565>> = Vec::new();
 
     loop {
         let mut needs_flush = false;

@@ -159,16 +159,21 @@ for iterating on UI layouts without flashing the device.
 brew install sdl2
 ```
 
+On Apple Silicon, the Cargo configuration adds Homebrew's `/opt/homebrew/lib`
+directory to the simulator link search path. If SDL2 is installed elsewhere,
+set `LIBRARY_PATH` to that installation's library directory before running the
+command.
+
 **Run (Apple Silicon Mac):**
 
 ```
-cargo run --example iris_demo_sim --features sim \
-    --target aarch64-apple-darwin \
-    --config 'unstable.build-std=["std"]'
+cargo run-sim --example iris_demo_sim
 ```
 
-The `--config` flag is required because `.cargo/config.toml` sets `build-std = ["alloc", "core"]`
-for the bare-metal xtensa target; this overrides it so the host standard library is used instead.
+The `run-sim` alias selects the `aarch64-apple-darwin` host target, enables the
+`sim` feature, and overrides the firmware-only `build-std` setting with host
+`std`. Pass any simulator example after the alias, for example
+`cargo run-sim --example iris_demo_sim`.
 
 **Controls:**
 

@@ -32,7 +32,7 @@ use iris_ui::{
     FontKind, Theme, ViewStyle,
 };
 
-const THEME: Theme = Theme {
+const THEME: Theme<Rgb565> = Theme {
     font: FontKind::Bitmap(FONT_10X20),
     bold_font: FontKind::Bitmap(FONT_9X18_BOLD),
     standard: ViewStyle {
@@ -55,7 +55,7 @@ const THEME: Theme = Theme {
 
 const SCALE: u32 = 2;
 
-fn build_scene() -> Scene {
+fn build_scene() -> Scene<Rgb565> {
     let mut scene = Scene::new_with_scale(
         Bounds::new(0, 0, (960 / SCALE) as i32, (540 / SCALE) as i32),
         SCALE,
@@ -64,7 +64,7 @@ fn build_scene() -> Scene {
     let panel = make_panel(&panel_id)
         .with_layout(Some(layout_vbox))
         .with_visible(true);
-    scene.add_view_to_parent(make_label("l1", "The first label"), &panel_id);
+    scene.add_view_to_parent(make_label(&ViewId::new("l1"), "The first label"), &panel_id);
     scene.add_view_to_parent(
         make_toggle_button(&ViewId::new("toggle1"), "Toggle"),
         &panel.name,
@@ -75,7 +75,7 @@ fn build_scene() -> Scene {
     scene
 }
 
-fn handle_action(action: Option<OutputAction>, scene: &mut Scene) {
+fn handle_action(action: Option<OutputAction>, scene: &mut Scene<Rgb565>) {
     let text = match action {
         Some(OutputAction::Command(cmd)) => format!("Command: {}", cmd),
         Some(OutputAction::Selected(lbl, idx)) => format!("Selected: {} ({})", lbl, idx),

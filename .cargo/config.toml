@@ -5,5 +5,17 @@ target = "xtensa-esp32s3-none-elf"
 runner    = "espflash flash --monitor --chip esp32s3"
 rustflags = ["-C", "link-arg=-nostartfiles"]
 
+# Homebrew's SDL2 is used by the host simulator on Apple Silicon.
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-L/opt/homebrew/lib"]
+
 [unstable]
 build-std = ["alloc", "core"]
+
+[alias]
+run-sim = [
+    "run",
+    "--features", "sim",
+    "--target", "aarch64-apple-darwin",
+    "--config", "unstable.build-std=[\"std\"]",
+]
